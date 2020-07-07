@@ -1,6 +1,7 @@
 const std = @import("std");
 const base64 = std.base64;
 const ascii = std.ascii;
+const time = std.time;
 const rand = std.rand;
 const fmt = std.fmt;
 const mem = std.mem;
@@ -30,7 +31,7 @@ pub fn create(buffer: []u8, reader: var, writer: var) BaseClient(@TypeOf(reader)
 }
 
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const handshake_key_len = 8;
+const handshake_key_length = 8;
 
 fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
     var hash = Sha1.init();
@@ -50,10 +51,13 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
     const ReaderError = @typeInfo(Reader).Pointer.child.Error;
     const WriterError = @typeInfo(Writer).Pointer.child.Error;
 
+    const HzzpClient = hzzp.BaseClient.BaseClient(Reader, Writer);
+
     return struct {
         const Self = @This();
 
         read_buffer: []u8,
+        prng: rand.DefaultPrng,
 
         reader: Reader,
         writer: Writer,
@@ -73,12 +77,13 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         pub fn init(buffer: []u8, reader: Reader, writer: Writer) Self {
             return Self{
                 .read_buffer = buffer,
+                .prng = rand.DefaultPrng.init(@bitCast(u64, time.milliTimestamp())),
                 .reader = reader,
                 .writer = writer,
             };
         }
 
-        pub const HandshakeError = ReaderError || WriterError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
+        pub const HandshakeError = ReaderError || WriterError || HzzpClient.ReadError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
         pub fn handshake(self: *Self, headers: *http.Headers, path: []const u8) HandshakeError!void {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
@@ -102,8 +107,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             var got_upgrade_header: bool = false;
             var got_accept_header: bool = false;
 
-            while (try client.readEvent()) |event| {
-                switch (event) {
+            while (!client.done) {
+                switch (try client.readEvent()) {
                     .status => |etc| {
                         if (etc.code != 101) {
                             return error.WrongResponse;
@@ -119,14 +124,14 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         } else if (ascii.eqlIgnoreCase(etc.name, "sec-websocket-accept")) {
                             got_accept_header = true;
 
-                            if (!checkKey(&encoded_key, etc.value)) {
+                            if (!checkHandshakeKey(&encoded_key, etc.value)) {
                                 return error.FailedChallenge;
                             }
                         }
                     },
                     .end => break,
-                    .invalid => error.WrongResponse,
-                    .closed => error.ConnectionClosed,
+                    .invalid => return error.WrongResponse,
+                    .closed => return error.ConnectionClosed,
 
                     else => {},
                 }
