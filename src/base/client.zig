@@ -199,24 +199,24 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         pub fn readEvent(self: *Self) ReaderError!ClientEvent {
             switch (self.state) {
                 .header => {
-                    var read_len = try self.reader.readAll(self.read_buffer[0..2]);
-                    if (read_len != 2) return ClientEvent.closed;
+                    const read_head_len = try self.reader.readAll(self.read_buffer[0..2]);
+                    if (read_head_len != 2) return ClientEvent.closed;
 
-                    var fin = self.read_buffer[0] & 0x80 == 0x80;
-                    var rsv1 = self.read_buffer[0] & 0x40 == 0x40;
-                    var rsv2 = self.read_buffer[0] & 0x20 == 0x20;
-                    var rsv3 = self.read_buffer[0] & 0x10 == 0x10;
-                    var opcode = @truncate(u4, self.read_buffer[0]);
+                    const fin = self.read_buffer[0] & 0x80 == 0x80;
+                    const rsv1 = self.read_buffer[0] & 0x40 == 0x40;
+                    const rsv2 = self.read_buffer[0] & 0x20 == 0x20;
+                    const rsv3 = self.read_buffer[0] & 0x10 == 0x10;
+                    const opcode = @truncate(u4, self.read_buffer[0]);
 
-                    var masked = self.read_buffer[1] & 0x80 == 0x80;
-                    var check_len = @truncate(u7, self.read_buffer[1]);
+                    const masked = self.read_buffer[1] & 0x80 == 0x80;
+                    const check_len = @truncate(u7, self.read_buffer[1]);
                     var len: u64 = check_len;
 
                     var mask_index: u4 = 2;
 
                     if (check_len == 127) {
-                        read_len = try self.reader.readAll(self.read_buffer[2..10]);
-                        if (read_len != 8) return ClientEvent.closed;
+                        const read_len_len = try self.reader.readAll(self.read_buffer[2..10]);
+                        if (read_len_len != 8) return ClientEvent.closed;
 
                         mask_index = 10;
                         len = mem.readIntBig(u64, self.read_buffer[2..10]);
@@ -225,8 +225,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         self.chunk_need = len;
                         self.chunk_read = 0;
                     } else if (check_len == 126) {
-                        read_len = try self.reader.readAll(self.read_buffer[2..4]);
-                        if (read_len != 2) return ClientEvent.closed;
+                        const read_len_len = try self.reader.readAll(self.read_buffer[2..4]);
+                        if (read_len_len != 2) return ClientEvent.closed;
 
                         mask_index = 4;
                         len = mem.readIntBig(u16, self.read_buffer[2..4]);
@@ -239,8 +239,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                     }
 
                     if (masked) {
-                        read_len = try self.reader.readAll(self.read_buffer[mask_index .. mask_index + 4]);
-                        if (read_len != 4) return ClientEvent.closed;
+                        const read_mask_len = try self.reader.readAll(self.read_buffer[mask_index .. mask_index + 4]);
+                        if (read_mask_len != 4) return ClientEvent.closed;
 
                         self.chunk_has_mask = true;
 
@@ -266,10 +266,10 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                     };
                 },
                 .chunk => {
-                    var left = self.chunk_need - self.chunk_read;
+                    const left = self.chunk_need - self.chunk_read;
 
                     if (left <= self.read_buffer.len) {
-                        var read_len = try self.reader.readAll(self.read_buffer[0..left]);
+                        const read_len = try self.reader.readAll(self.read_buffer[0..left]);
                         if (read_len != left) return ClientEvent.closed;
 
                         if (self.chunk_has_mask) {
@@ -286,7 +286,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                             },
                         };
                     } else {
-                        var read_len = try self.reader.read(self.read_buffer);
+                        const read_len = try self.reader.read(self.read_buffer);
                         if (read_len == 0) return ClientEvent.closed;
 
                         if (self.chunk_has_mask) {
