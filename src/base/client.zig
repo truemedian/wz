@@ -47,6 +47,10 @@ fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
     return mem.eql(u8, &encoded, recieved);
 }
 
+inline fn extractMaskByte(mask: u32, index: usize) u8 {
+    return @truncate(u8, mask >> @truncate(u5, (index % 4) * 8));
+}
+
 pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
     const ReaderError = @typeInfo(Reader).Pointer.child.Error;
     const WriterError = @typeInfo(Writer).Pointer.child.Error;
@@ -69,8 +73,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 
         chunk_need: usize = 0,
         chunk_read: usize = 0,
-        chunk_has_mask: bool = false,
-        chunk_mask: [4]u8 = undefined,
+        chunk_mask: ?u32 = undefined,
 
         state: ParserState = .header,
 
@@ -107,8 +110,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             var got_upgrade_header: bool = false;
             var got_accept_header: bool = false;
 
-            while (!client.done) {
-                switch (try client.readEvent()) {
+            while (try client.readEvent()) |event| {
+                switch (event) {
                     .status => |etc| {
                         if (etc.code != 101) {
                             return error.WrongResponse;
@@ -178,7 +181,10 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             }
 
             if (header.mask) |mask| {
-                try self.writer.writeAll(&mem.toBytes(mask));
+                var mask_bytes: [4]u8 = undefined;
+                mem.writeIntBig(u32, &mask_bytes, mask);
+
+                try self.writer.writeAll(&mask_bytes);
 
                 self.current_mask = mask;
                 self.mask_index = 0;
@@ -196,7 +202,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             }
         }
 
-        pub fn readEvent(self: *Self) ReaderError!ClientEvent {
+        pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
             switch (self.state) {
                 .header => {
                     const read_head_len = try self.reader.readAll(self.read_buffer[0..2]);
@@ -242,13 +248,9 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         const read_mask_len = try self.reader.readAll(self.read_buffer[mask_index .. mask_index + 4]);
                         if (read_mask_len != 4) return ClientEvent.closed;
 
-                        self.chunk_has_mask = true;
-
-                        for (self.read_buffer[mask_index .. mask_index + 4]) |c, i| {
-                            self.chunk_mask[i] = c;
-                        }
+                        self.chunk_mask = mem.readIntSliceBig(u32, self.read_buffer[mask_index .. mask_index + 4]);
                     } else {
-                        self.chunk_has_mask = false;
+                        self.chunk_mask = null;
                     }
 
                     self.state = .chunk;
@@ -261,7 +263,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                             .rsv3 = rsv3,
                             .opcode = opcode,
                             .length = len,
-                            // .mask = self.chunk_mask,
+                            .mask = self.chunk_mask,
                         },
                     };
                 },
@@ -272,9 +274,9 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         const read_len = try self.reader.readAll(self.read_buffer[0..left]);
                         if (read_len != left) return ClientEvent.closed;
 
-                        if (self.chunk_has_mask) {
+                        if (self.chunk_mask) |mask| {
                             for (self.read_buffer[0..read_len]) |*c, i| {
-                                c.* = c.* ^ self.chunk_mask[(i + self.chunk_read) % 4];
+                                c.* = c.* ^ extractMaskByte(mask, i + self.chunk_read);
                             }
                         }
 
@@ -289,9 +291,9 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         const read_len = try self.reader.read(self.read_buffer);
                         if (read_len == 0) return ClientEvent.closed;
 
-                        if (self.chunk_has_mask) {
+                        if (self.chunk_mask) |mask| {
                             for (self.read_buffer[0..read_len]) |*c, i| {
-                                c.* = c.* ^ self.chunk_mask[(i + self.chunk_read) % 4];
+                                c.* = c.* ^ extractMaskByte(mask, i + self.chunk_read);
                             }
                         }
 
@@ -332,7 +334,7 @@ test "decodes a simple message" {
 
     try client.writeMessagePayload("aaabbbccc");
 
-    var header = try client.readEvent();
+    var header = (try client.readEvent()).?;
     testing.expect(header == .header);
     testing.expect(header.header.fin == true);
     testing.expect(header.header.rsv1 == false);
@@ -342,7 +344,7 @@ test "decodes a simple message" {
     testing.expect(header.header.length == 13);
     testing.expect(header.header.mask == null);
 
-    var payload = try client.readEvent();
+    var payload = (try client.readEvent()).?;
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
     testing.expect(mem.eql(u8, payload.chunk.data, "Hello, World!"));
@@ -352,8 +354,8 @@ test "decodes a masked message" {
     var read_buffer: [32]u8 = undefined;
     var the_void: [1024]u8 = undefined;
     var response = [_]u8{
-        0x82, 0x8d, 0x12, 0x34, 0x56, 0x78, 0x5a, 0x51, 0x3a, 0x14, 0x7d,
-        0x18, 0x76, 0x2f, 0x7d, 0x46, 0x3a, 0x1c, 0x33,
+        0x82, 0x8d, 0x12, 0x34, 0x56, 0x78, 0x30, 0x33, 0x58, 0x7e, 0x17,
+        0x7a, 0x14, 0x45, 0x17, 0x24, 0x58, 0x76, 0x59,
     };
 
     var reader = io.fixedBufferStream(&response).reader();
@@ -369,7 +371,7 @@ test "decodes a masked message" {
 
     try client.writeMessagePayload("aaabbbccc");
 
-    var header = try client.readEvent();
+    var header = (try client.readEvent()).?;
     testing.expect(header == .header);
     testing.expect(header.header.fin == true);
     testing.expect(header.header.rsv1 == false);
@@ -377,10 +379,48 @@ test "decodes a masked message" {
     testing.expect(header.header.rsv3 == false);
     testing.expect(header.header.opcode == 2);
     testing.expect(header.header.length == 13);
-    // testing.expect(header.header.mask != null);
+    testing.expect(header.header.mask.? == 0x12345678);
 
-    var payload = try client.readEvent();
+    var payload = (try client.readEvent()).?;
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
     testing.expect(mem.eql(u8, payload.chunk.data, "Hello, World!"));
+}
+
+test "attempt echo on echo.websocket.org" {
+    if (std.builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
+    defer socket.close();
+
+    var buffer: [4096]u8 = undefined;
+
+    var client = create(&buffer, &socket.reader(), &socket.writer());
+    var headers = http.Headers.init(testing.allocator);
+    defer headers.deinit();
+
+    try headers.append("Host", "echo.websocket.org", false);
+    try client.handshake(&headers, "/");
+
+    try client.writeMessageHeader(.{
+        .opcode = 2,
+        .length = 4,
+    });
+
+    try client.writeMessagePayload("test");
+
+    var header = (try client.readEvent()).?;
+    testing.expect(header == .header);
+    testing.expect(header.header.fin == true);
+    testing.expect(header.header.rsv1 == false);
+    testing.expect(header.header.rsv2 == false);
+    testing.expect(header.header.rsv3 == false);
+    testing.expect(header.header.opcode == 2);
+    testing.expect(header.header.length == 4);
+    testing.expect(header.header.mask == null);
+
+    var payload = (try client.readEvent()).?;
+    testing.expect(payload == .chunk);
+    testing.expect(payload.chunk.final == true);
+    testing.expect(mem.eql(u8, payload.chunk.data, "test"));
 }
