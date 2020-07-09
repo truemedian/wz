@@ -67,6 +67,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         writer: Writer,
 
         handshaken: bool = false,
+        handshake_client: HzzpClient,
+        handshake_key: [base64.Base64Encoder.calcSize(handshake_key_length)]u8 = undefined,
 
         current_mask: ?u32 = null,
         mask_index: usize = 0,
@@ -80,37 +82,39 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         pub fn init(buffer: []u8, reader: Reader, writer: Writer) Self {
             return Self{
                 .read_buffer = buffer,
+                .handshake_client = hzzp.BaseClient.create(buffer, reader, writer),
                 .prng = rand.DefaultPrng.init(@bitCast(u64, time.milliTimestamp())),
                 .reader = reader,
                 .writer = writer,
             };
         }
 
-        pub const HandshakeError = ReaderError || WriterError || HzzpClient.ReadError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
-        pub fn handshake(self: *Self, headers: *http.Headers, path: []const u8) HandshakeError!void {
+        pub fn sendHandshake(self: *Self, headers: *http.Headers, path: []const u8) WriterError!void {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
 
-            var encoded_key: [base64.Base64Encoder.calcSize(handshake_key_length)]u8 = undefined;
-            base64.standard_encoder.encode(&encoded_key, &raw_key);
-
-            var client = hzzp.BaseClient.create(self.read_buffer, self.reader, self.writer);
-            try client.writeHead("GET", path);
+            base64.standard_encoder.encode(&self.handshake_key, &raw_key);
+            
+            self.handshake_client.reset();
+            try self.handshake_client.writeHead("GET", path);
 
             for (headers.toSlice()) |entry| {
-                try client.writeHeader(entry.name, entry.value);
+                try self.handshake_client.writeHeader(entry.name, entry.value);
             }
 
-            try client.writeHeader("Connection", "Upgrade");
-            try client.writeHeader("Upgrade", "websocket");
-            try client.writeHeader("Sec-WebSocket-Version", "13");
-            try client.writeHeader("Sec-WebSocket-Key", &encoded_key);
-            try client.writeHeadComplete();
+            try self.handshake_client.writeHeader("Connection", "Upgrade");
+            try self.handshake_client.writeHeader("Upgrade", "websocket");
+            try self.handshake_client.writeHeader("Sec-WebSocket-Version", "13");
+            try self.handshake_client.writeHeader("Sec-WebSocket-Key", &self.handshake_key);
+            try self.handshake_client.writeHeadComplete();
+        }
 
+        pub const HandshakeError = ReaderError || HzzpClient.ReadError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
+        pub fn waitForHandshake(self: *Self) HandshakeError!void {
             var got_upgrade_header: bool = false;
             var got_accept_header: bool = false;
 
-            while (try client.readEvent()) |event| {
+            while (try self.handshake_client.readEvent()) |event| {
                 switch (event) {
                     .status => |etc| {
                         if (etc.code != 101) {
@@ -127,7 +131,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                         } else if (ascii.eqlIgnoreCase(etc.name, "sec-websocket-accept")) {
                             got_accept_header = true;
 
-                            if (!checkHandshakeKey(&encoded_key, etc.value)) {
+                            if (!checkHandshakeKey(&self.handshake_key, etc.value)) {
                                 return error.FailedChallenge;
                             }
                         }
@@ -400,7 +404,8 @@ test "attempt echo on echo.websocket.org" {
     defer headers.deinit();
 
     try headers.append("Host", "echo.websocket.org", false);
-    try client.handshake(&headers, "/");
+    try client.sendHandshake(&headers, "/");
+    try client.waitForHandshake();
 
     try client.writeMessageHeader(.{
         .opcode = 2,
