@@ -161,7 +161,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             if (header.rsv2) bytes[0] |= 0x20;
             if (header.rsv3) bytes[0] |= 0x10;
 
-            if (header.mask) |_| bytes[1] |= 0x80;
+            const mask = header.mask orelse self.prng.random.int(u32);
+            bytes[1] |= 0x80;
 
             if (header.length < 126) {
                 bytes[1] |= @truncate(u8, header.length);
@@ -184,26 +185,29 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 try self.writer.writeAll(&len);
             }
 
-            if (header.mask) |mask| {
-                var mask_bytes: [4]u8 = undefined;
-                mem.writeIntBig(u32, &mask_bytes, mask);
+            var mask_bytes: [4]u8 = undefined;
+            mem.writeIntLittle(u32, &mask_bytes, mask);
 
-                try self.writer.writeAll(&mask_bytes);
+            try self.writer.writeAll(&mask_bytes);
 
-                self.current_mask = mask;
-                self.mask_index = 0;
-            } else {
-                self.current_mask = null;
-                self.mask_index = 0;
+            self.current_mask = mask;
+            self.mask_index = 0;
+        }
+
+        pub fn maskPayload(self: *Self, payload: []const u8, buffer: []u8) void {
+            if (self.current_mask) |mask| {
+                assert(buffer.len >= payload.len);
+
+                for (payload) |c, i| {
+                    buffer[i] = c ^ extractMaskByte(mask, i + self.mask_index);
+                }
+
+                self.mask_index += payload.len;
             }
         }
 
         pub fn writeMessagePayload(self: *Self, payload: []const u8) WriterError!void {
-            if (self.current_mask) |mask| {
-                unreachable;
-            } else {
-                try self.writer.writeAll(payload);
-            }
+            try self.writer.writeAll(payload);
         }
 
         pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
@@ -230,7 +234,6 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 
                         mask_index = 10;
                         len = mem.readIntBig(u64, self.read_buffer[2..10]);
-
 
                         self.chunk_need = len;
                         self.chunk_read = 0;
@@ -412,7 +415,10 @@ test "attempt echo on echo.websocket.org" {
         .length = 4,
     });
 
-    try client.writeMessagePayload("test");
+    var masked: [4]u8 = undefined;
+    client.maskPayload("test", &masked);
+
+    try client.writeMessagePayload(&masked);
 
     var header = (try client.readEvent()).?;
     testing.expect(header == .header);
@@ -427,5 +433,6 @@ test "attempt echo on echo.websocket.org" {
     var payload = (try client.readEvent()).?;
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
+    std.debug.print("{}\n", .{payload.chunk.data});
     testing.expect(mem.eql(u8, payload.chunk.data, "test"));
 }
