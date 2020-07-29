@@ -23,8 +23,6 @@ fn stripCarriageReturn(buffer: []u8) []u8 {
 }
 
 pub fn create(buffer: []u8, reader: anytype, writer: anytype) BaseClient(@TypeOf(reader), @TypeOf(writer)) {
-    assert(@typeInfo(@TypeOf(reader)) == .Pointer);
-    assert(@typeInfo(@TypeOf(writer)) == .Pointer);
     assert(buffer.len >= 16);
 
     return BaseClient(@TypeOf(reader), @TypeOf(writer)).init(buffer, reader, writer);
@@ -52,8 +50,8 @@ inline fn extractMaskByte(mask: u32, index: usize) u8 {
 }
 
 pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
-    const ReaderError = @typeInfo(Reader).Pointer.child.Error;
-    const WriterError = @typeInfo(Writer).Pointer.child.Error;
+    const ReaderError = if (@typeInfo(Reader) == .Pointer) @typeInfo(Reader).Pointer.child.Error else Reader.Error;
+    const WriterError = if (@typeInfo(Writer) == .Pointer) @typeInfo(Writer).Pointer.child.Error else Writer.Error;
 
     const HzzpClient = hzzp.BaseClient.BaseClient(Reader, Writer);
 
@@ -331,7 +329,7 @@ test "decodes a simple message" {
     var reader = io.fixedBufferStream(&response).reader();
     var writer = io.fixedBufferStream(&the_void).writer();
 
-    var client = create(&read_buffer, &reader, &writer);
+    var client = create(&read_buffer, reader, writer);
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
@@ -368,7 +366,7 @@ test "decodes a masked message" {
     var reader = io.fixedBufferStream(&response).reader();
     var writer = io.fixedBufferStream(&the_void).writer();
 
-    var client = create(&read_buffer, &reader, &writer);
+    var client = create(&read_buffer, reader, writer);
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
@@ -402,7 +400,7 @@ test "attempt echo on echo.websocket.org" {
 
     var buffer: [4096]u8 = undefined;
 
-    var client = create(&buffer, &socket.reader(), &socket.writer());
+    var client = create(&buffer, socket.reader(), socket.writer());
     var headers = http.Headers.init(testing.allocator);
     defer headers.deinit();
 
