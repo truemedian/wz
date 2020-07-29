@@ -22,7 +22,7 @@ fn stripCarriageReturn(buffer: []u8) []u8 {
     }
 }
 
-pub fn create(buffer: []u8, reader: var, writer: var) BaseClient(@TypeOf(reader), @TypeOf(writer)) {
+pub fn create(buffer: []u8, reader: anytype, writer: anytype) BaseClient(@TypeOf(reader), @TypeOf(writer)) {
     assert(@typeInfo(@TypeOf(reader)) == .Pointer);
     assert(@typeInfo(@TypeOf(writer)) == .Pointer);
     assert(buffer.len >= 16);
