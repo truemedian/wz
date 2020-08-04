@@ -224,6 +224,15 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
             try self.writer.writeAll(payload);
         }
 
+        pub fn writeMaskedPayload(self: *Self, payload: []const u8) WriterError!void {
+            const mask = self.current_mask.?;
+            for (payload) |c, i| {
+                try self.writer.writeByte(c ^ extractMaskByte(mask, i + self.mask_index));
+            }
+
+            self.mask_index += payload.len;
+        }
+
         pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
             switch (self.state) {
                 .header => {
