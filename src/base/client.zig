@@ -12,7 +12,7 @@ const http = std.http;
 const Sha1 = std.crypto.Sha1;
 const assert = std.debug.assert;
 
-pub usingnamespace @import("events.zig");
+usingnamespace @import("common.zig");
 
 fn stripCarriageReturn(buffer: []u8) []u8 {
     if (buffer[buffer.len - 1] == '\r') {
@@ -22,10 +22,10 @@ fn stripCarriageReturn(buffer: []u8) []u8 {
     }
 }
 
-pub fn create(buffer: []u8, reader: anytype, writer: anytype) BaseClient(@TypeOf(reader), @TypeOf(writer)) {
+pub fn create(buffer: []u8, reader: anytype, writer: anytype) Client(@TypeOf(reader), @TypeOf(writer)) {
     assert(buffer.len >= 16);
 
-    return BaseClient(@TypeOf(reader), @TypeOf(writer)).init(buffer, reader, writer);
+    return Client(@TypeOf(reader), @TypeOf(writer)).init(buffer, reader, writer);
 }
 
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -49,11 +49,11 @@ inline fn extractMaskByte(mask: u32, index: usize) u8 {
     return @truncate(u8, mask >> @truncate(u5, (index % 4) * 8));
 }
 
-pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
+pub fn Client(comptime Reader: type, comptime Writer: type) type {
     const ReaderError = if (@typeInfo(Reader) == .Pointer) @typeInfo(Reader).Pointer.child.Error else Reader.Error;
     const WriterError = if (@typeInfo(Writer) == .Pointer) @typeInfo(Writer).Pointer.child.Error else Writer.Error;
 
-    const HzzpClient = hzzp.BaseClient.BaseClient(Reader, Writer);
+    const HzzpClient = hzzp.base.Client.Client(Reader, Writer);
 
     return struct {
         const Self = @This();
@@ -80,7 +80,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         pub fn init(buffer: []u8, reader: Reader, writer: Writer) Self {
             return Self{
                 .read_buffer = buffer,
-                .handshake_client = hzzp.BaseClient.create(buffer, reader, writer),
+                .handshake_client = hzzp.base.Client.create(buffer, reader, writer),
                 .prng = rand.DefaultPrng.init(@bitCast(u64, time.milliTimestamp())),
                 .reader = reader,
                 .writer = writer,
@@ -92,18 +92,18 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             self.prng.random.bytes(&raw_key);
 
             base64.standard_encoder.encode(&self.handshake_key, &raw_key);
-            
+
             self.handshake_client.reset();
             try self.handshake_client.writeHead("GET", path);
 
             for (headers.toSlice()) |entry| {
-                try self.handshake_client.writeHeader(entry.name, entry.value);
+                try self.handshake_client.writeHeaderValue(entry.name, entry.value);
             }
 
-            try self.handshake_client.writeHeader("Connection", "Upgrade");
-            try self.handshake_client.writeHeader("Upgrade", "websocket");
-            try self.handshake_client.writeHeader("Sec-WebSocket-Version", "13");
-            try self.handshake_client.writeHeader("Sec-WebSocket-Key", &self.handshake_key);
+            try self.handshake_client.writeHeaderValue("Connection", "Upgrade");
+            try self.handshake_client.writeHeaderValue("Upgrade", "websocket");
+            try self.handshake_client.writeHeaderValue("Sec-WebSocket-Version", "13");
+            try self.handshake_client.writeHeaderValue("Sec-WebSocket-Key", &self.handshake_key);
             try self.handshake_client.writeHeadComplete();
         }
 
