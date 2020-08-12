@@ -1,3 +1,5 @@
+pub const hzzp = @import("hzzp").base;
+
 pub const ParserState = enum {
     header,
     chunk,
@@ -13,12 +15,12 @@ pub const MessageHeader = struct {
     mask: ?u32 = null,
 };
 
-pub const Chunk = struct {
+pub const ChunkEvent = struct {
     data: []const u8,
     final: bool = false,
 };
 
-pub const Invalid = struct {
+pub const InvalidEvent = struct {
     buffer: []const u8,
     message: []const u8,
     state: ParserState,
@@ -26,8 +28,8 @@ pub const Invalid = struct {
 
 pub const ClientEvent = union(enum) {
     header: MessageHeader,
-    chunk: Chunk,
+    chunk: ChunkEvent,
     end: void,
-    invalid: Invalid,
+    invalid: InvalidEvent,
     closed: void,
 };

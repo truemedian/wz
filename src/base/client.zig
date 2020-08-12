@@ -6,7 +6,6 @@ const rand = std.rand;
 const fmt = std.fmt;
 const mem = std.mem;
 
-const hzzp = @import("hzzp");
 const http = std.http;
 
 const Sha1 = std.crypto.Sha1;
@@ -53,7 +52,7 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
     const ReaderError = if (@typeInfo(Reader) == .Pointer) @typeInfo(Reader).Pointer.child.Error else Reader.Error;
     const WriterError = if (@typeInfo(Writer) == .Pointer) @typeInfo(Writer).Pointer.child.Error else Writer.Error;
 
-    const HzzpClient = hzzp.base.Client.Client(Reader, Writer);
+    const HzzpClient = hzzp.Client.Client(Reader, Writer);
 
     return struct {
         const Self = @This();
@@ -80,14 +79,14 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
         pub fn init(buffer: []u8, reader: Reader, writer: Writer) Self {
             return Self{
                 .read_buffer = buffer,
-                .handshake_client = hzzp.base.Client.create(buffer, reader, writer),
+                .handshake_client = hzzp.Client.create(buffer, reader, writer),
                 .prng = rand.DefaultPrng.init(@bitCast(u64, time.milliTimestamp())),
                 .reader = reader,
                 .writer = writer,
             };
         }
 
-        pub fn sendHandshake(self: *Self, headers: *http.Headers, path: []const u8) WriterError!void {
+        pub fn sendHandshakeHead(self: *Self, path: []const u8) WriterError!void {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
 
@@ -96,15 +95,32 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
             self.handshake_client.reset();
             try self.handshake_client.writeHead("GET", path);
 
-            for (headers.toSlice()) |entry| {
-                try self.handshake_client.writeHeaderValue(entry.name, entry.value);
-            }
-
             try self.handshake_client.writeHeaderValue("Connection", "Upgrade");
             try self.handshake_client.writeHeaderValue("Upgrade", "websocket");
             try self.handshake_client.writeHeaderValue("Sec-WebSocket-Version", "13");
             try self.handshake_client.writeHeaderValue("Sec-WebSocket-Key", &self.handshake_key);
-            try self.handshake_client.writeHeadComplete();
+        }
+
+        pub fn sendHandshakeHeaderValue(self: *Self, name: []const u8, value: []const u8) WriterError!void {
+            return self.handshake_client.writeHeaderValue(name, value);
+        }
+
+        pub fn sendHandshakeHeader(self: *Self, header: hzzp.Header) WriterError!void {
+            return self.handshake_client.writeHeader(header);
+        }
+
+        pub fn sendHandshakeHeaderArray(self: *Self, headers: hzzp.Headers) WriterError!void {
+            return self.handshake_client.writeHeaders(headers);
+        }
+
+        pub fn sendHandshakeStdHeaders(self: *Self, headers: *http.Headers) WriterError!void {
+            for (headers.toSlice()) |entry| {
+                try self.handshake_client.writeHeaderValue(entry.name, entry.value);
+            }
+        }
+
+        pub fn sendHandshakeHeadComplete(self: *Self) WriterError!void {
+            return self.handshake_client.writeHeadComplete();
         }
 
         pub const HandshakeError = ReaderError || HzzpClient.ReadError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
@@ -401,11 +417,11 @@ test "attempt echo on echo.websocket.org" {
     var buffer: [4096]u8 = undefined;
 
     var client = create(&buffer, socket.reader(), socket.writer());
-    var headers = http.Headers.init(testing.allocator);
-    defer headers.deinit();
 
-    try headers.append("Host", "echo.websocket.org", false);
-    try client.sendHandshake(&headers, "/");
+    try client.sendHandshakeHead("/");
+    try client.sendHandshakeHeaderValue("Host", "echo.websocket.org");
+    try client.sendHandshakeHeadComplete();
+
     try client.waitForHandshake();
 
     try client.writeMessageHeader(.{
@@ -431,6 +447,5 @@ test "attempt echo on echo.websocket.org" {
     var payload = (try client.readEvent()).?;
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
-    std.debug.print("{}\n", .{payload.chunk.data});
     testing.expect(mem.eql(u8, payload.chunk.data, "test"));
 }
