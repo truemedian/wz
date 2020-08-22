@@ -8,7 +8,7 @@ const mem = std.mem;
 
 const http = std.http;
 
-const Sha1 = std.crypto.Sha1;
+const Sha1 = std.crypto.hash.Sha1;
 const assert = std.debug.assert;
 
 usingnamespace @import("common.zig");
@@ -31,7 +31,7 @@ const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const handshake_key_length = 8;
 
 fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
-    var hash = Sha1.init();
+    var hash = Sha1.init(.{});
     hash.update(original);
     hash.update(websocket_guid);
 
