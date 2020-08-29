@@ -438,10 +438,7 @@ test "attempt echo on echo.websocket.org" {
         .length = 4,
     });
 
-    var masked: [4]u8 = undefined;
-    client.maskPayload("test", &masked);
-
-    try client.writeUnmaskedPayload(&masked);
+    try client.writeMessagePayload("test");
 
     var header = (try client.readEvent()).?;
     testing.expect(header == .header);
