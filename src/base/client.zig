@@ -220,8 +220,17 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
             }
         }
 
-        pub fn writeMessagePayload(self: *Self, payload: []const u8) WriterError!void {
+        pub fn writeUnmaskedPayload(self: *Self, payload: []const u8) WriterError!void {
             try self.writer.writeAll(payload);
+        }
+
+        pub fn writeMessagePayload(self: *Self, payload: []const u8) WriterError!void {
+            const mask = self.current_mask.?;
+            for (payload) |c, i| {
+                try self.writer.writeByte(c ^ extractMaskByte(mask, i + self.mask_index));
+            }
+
+            self.mask_index += payload.len;
         }
 
         pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
@@ -353,7 +362,7 @@ test "decodes a simple message" {
         .length = 9,
     });
 
-    try client.writeMessagePayload("aaabbbccc");
+    try client.writeUnmaskedPayload("aaabbbccc");
 
     var header = (try client.readEvent()).?;
     testing.expect(header == .header);
@@ -390,7 +399,7 @@ test "decodes a masked message" {
         .length = 9,
     });
 
-    try client.writeMessagePayload("aaabbbccc");
+    try client.writeUnmaskedPayload("aaabbbccc");
 
     var header = (try client.readEvent()).?;
     testing.expect(header == .header);
@@ -429,10 +438,7 @@ test "attempt echo on echo.websocket.org" {
         .length = 4,
     });
 
-    var masked: [4]u8 = undefined;
-    client.maskPayload("test", &masked);
-
-    try client.writeMessagePayload(&masked);
+    try client.writeMessagePayload("test");
 
     var header = (try client.readEvent()).?;
     testing.expect(header == .header);
