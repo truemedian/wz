@@ -28,7 +28,7 @@ pub fn create(buffer: []u8, reader: anytype, writer: anytype) Client(@TypeOf(rea
 }
 
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const handshake_key_length = 8;
+const handshake_key_length = 16;
 
 fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
     var hash = Sha1.init(.{});
