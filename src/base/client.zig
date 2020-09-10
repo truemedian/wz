@@ -167,7 +167,7 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
 
         pub fn writeMessageHeader(self: *Self, header: MessageHeader) WriterError!void {
             var bytes: [2]u8 = undefined;
-            bytes[0] = @as(u8, header.opcode);
+            bytes[0] = @enumToInt(header.opcode);
             bytes[1] = 0;
 
             if (header.fin) bytes[0] |= 0x80;
@@ -291,7 +291,7 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
                             .rsv1 = rsv1,
                             .rsv2 = rsv2,
                             .rsv3 = rsv3,
-                            .opcode = opcode,
+                            .opcode = @intToEnum(Opcode, opcode),
                             .length = len,
                             .mask = self.chunk_mask,
                         },
@@ -358,7 +358,7 @@ test "decodes a simple message" {
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
-        .opcode = 2,
+        .opcode = Opcode.Binary,
         .length = 9,
     });
 
@@ -370,7 +370,7 @@ test "decodes a simple message" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == 2);
+    testing.expect(header.header.opcode == Opcode.Binary);
     testing.expect(header.header.length == 13);
     testing.expect(header.header.mask == null);
 
@@ -395,7 +395,7 @@ test "decodes a masked message" {
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
-        .opcode = 2,
+        .opcode = Opcode.Binary,
         .length = 9,
     });
 
@@ -407,7 +407,7 @@ test "decodes a masked message" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == 2);
+    testing.expect(header.header.opcode == Opcode.Binary);
     testing.expect(header.header.length == 13);
     testing.expect(header.header.mask.? == 0x12345678);
 
@@ -434,7 +434,7 @@ test "attempt echo on echo.websocket.org" {
     try client.waitForHandshake();
 
     try client.writeMessageHeader(.{
-        .opcode = 2,
+        .opcode = Opcode.Binary,
         .length = 4,
     });
 
@@ -446,7 +446,7 @@ test "attempt echo on echo.websocket.org" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == 2);
+    testing.expect(header.header.opcode == Opcode.Binary);
     testing.expect(header.header.length == 4);
     testing.expect(header.header.mask == null);
 
