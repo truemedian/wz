@@ -22,6 +22,7 @@ pub const Opcode = enum(u4) {
     Close = 0x08,
     Ping,
     Pong,
+    _,
 };
 
 pub const ChunkEvent = struct {
