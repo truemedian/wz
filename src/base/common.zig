@@ -16,12 +16,12 @@ pub const MessageHeader = struct {
 };
 
 pub const Opcode = enum(u4) {
-    Continuation,
-    Text,
-    Binary,
+    Continuation = 0x00,
+    Text = 0x01,
+    Binary = 0x02,
     Close = 0x08,
-    Ping,
-    Pong,
+    Ping = 0x09,
+    Pong = 0x0a,
     _,
 };
 
