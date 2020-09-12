@@ -13,14 +13,6 @@ const assert = std.debug.assert;
 
 usingnamespace @import("common.zig");
 
-fn stripCarriageReturn(buffer: []u8) []u8 {
-    if (buffer[buffer.len - 1] == '\r') {
-        return buffer[0 .. buffer.len - 1];
-    } else {
-        return buffer;
-    }
-}
-
 pub fn create(buffer: []u8, reader: anytype, writer: anytype) Client(@TypeOf(reader), @TypeOf(writer)) {
     assert(buffer.len >= 16);
 
