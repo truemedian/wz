@@ -3,7 +3,6 @@ const base64 = std.base64;
 const ascii = std.ascii;
 const time = std.time;
 const rand = std.rand;
-const fmt = std.fmt;
 const mem = std.mem;
 
 const http = std.http;
@@ -22,7 +21,7 @@ pub fn create(buffer: []u8, reader: anytype, writer: anytype) Client(@TypeOf(rea
 const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const handshake_key_length = 16;
 
-fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
+fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     var hash = Sha1.init(.{});
     hash.update(original);
     hash.update(websocket_guid);
@@ -33,7 +32,7 @@ fn checkHandshakeKey(original: []const u8, recieved: []const u8) bool {
     var encoded: [base64.Base64Encoder.calcSize(Sha1.digest_length)]u8 = undefined;
     base64.standard_encoder.encode(&encoded, &hashed_key);
 
-    return mem.eql(u8, &encoded, recieved);
+    return mem.eql(u8, &encoded, received);
 }
 
 inline fn extractMaskByte(mask: u32, index: usize) u8 {
@@ -201,14 +200,16 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
         }
 
         pub fn maskPayload(self: *Self, payload: []const u8, buffer: []u8) void {
-            if (self.current_mask) |mask| {
-                assert(buffer.len >= payload.len);
+            assert(buffer.len >= payload.len);
 
+            if (self.current_mask) |mask| {
                 for (payload) |c, i| {
                     buffer[i] = c ^ extractMaskByte(mask, i + self.mask_index);
                 }
 
                 self.mask_index += payload.len;
+            } else {
+                mem.copy(u8, buffer, payload);
             }
         }
 
@@ -217,12 +218,19 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
         }
 
         pub fn writeMessagePayload(self: *Self, payload: []const u8) WriterError!void {
-            const mask = self.current_mask.?;
-            for (payload) |c, i| {
-                try self.writer.writeByte(c ^ extractMaskByte(mask, i + self.mask_index));
-            }
+            if (self.current_mask) |mask| {
+                var byte: [1]u8 = undefined;
 
-            self.mask_index += payload.len;
+                for (payload) |c, i| {
+                    byte[0] = c ^ extractMaskByte(mask, i + self.mask_index);
+
+                    try self.writer.writeAll(&byte);
+                }
+
+                self.mask_index += payload.len;
+            } else {
+                unreachable;
+            }
         }
 
         pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
@@ -350,7 +358,7 @@ test "decodes a simple message" {
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
-        .opcode = Opcode.Binary,
+        .opcode = .Binary,
         .length = 9,
     });
 
@@ -362,7 +370,7 @@ test "decodes a simple message" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == Opcode.Binary);
+    testing.expect(header.header.opcode == .Binary);
     testing.expect(header.header.length == 13);
     testing.expect(header.header.mask == null);
 
@@ -387,7 +395,7 @@ test "decodes a masked message" {
     client.handshaken = true;
 
     try client.writeMessageHeader(.{
-        .opcode = Opcode.Binary,
+        .opcode = .Binary,
         .length = 9,
     });
 
@@ -399,7 +407,7 @@ test "decodes a masked message" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == Opcode.Binary);
+    testing.expect(header.header.opcode == .Binary);
     testing.expect(header.header.length == 13);
     testing.expect(header.header.mask.? == 0x12345678);
 
@@ -426,7 +434,7 @@ test "attempt echo on echo.websocket.org" {
     try client.waitForHandshake();
 
     try client.writeMessageHeader(.{
-        .opcode = Opcode.Binary,
+        .opcode = .Binary,
         .length = 4,
     });
 
@@ -438,7 +446,7 @@ test "attempt echo on echo.websocket.org" {
     testing.expect(header.header.rsv1 == false);
     testing.expect(header.header.rsv2 == false);
     testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == Opcode.Binary);
+    testing.expect(header.header.opcode == .Binary);
     testing.expect(header.header.length == 4);
     testing.expect(header.header.mask == null);
 
