@@ -5,8 +5,6 @@ const time = std.time;
 const rand = std.rand;
 const mem = std.mem;
 
-const http = std.http;
-
 const Sha1 = std.crypto.hash.Sha1;
 const assert = std.debug.assert;
 
@@ -102,12 +100,6 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
 
         pub fn sendHandshakeHeaderArray(self: *Self, headers: hzzp.Headers) WriterError!void {
             return self.handshake_client.writeHeaders(headers);
-        }
-
-        pub fn sendHandshakeStdHeaders(self: *Self, headers: *http.Headers) WriterError!void {
-            for (headers.toSlice()) |entry| {
-                try self.handshake_client.writeHeaderValue(entry.name, entry.value);
-            }
         }
 
         pub fn sendHandshakeHeadComplete(self: *Self) WriterError!void {
