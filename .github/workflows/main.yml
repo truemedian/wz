@@ -29,6 +29,7 @@ jobs:
       with:
         repository: 'mattnite/zkg'
         path: .tools/zkg.d
+        submodules: true
 
     - name: Setup ZKG
       working-directory: .tools/zkg.d
