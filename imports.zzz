@@ -4,4 +4,4 @@ hzzp:
     github:
       user: truemedian
       repo: hzzp
-      ref: master
+      ref: old
