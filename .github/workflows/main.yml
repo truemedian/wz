@@ -3,43 +3,62 @@ name: Tests
 on:
   push:
     paths:
-    - '**.zig'
+      - "**.zig"
   pull_request:
     paths:
-    - '**.zig'
+      - "**.zig"
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+
+      - name: Lint
+        run: zig fmt src
+
   test:
+    needs: lint
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v2
-    - uses: goto-bus-stop/setup-zig@v1
-      with:
-        version: master
+      - name: Checkout
+        uses: actions/checkout@v2
 
-    - name: Checkout ZKG
-      uses: actions/checkout@v2
-      with:
-        repository: 'mattnite/zkg'
-        path: .tools/zkg.d
-        submodules: true
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
 
-    - name: Setup ZKG
-      working-directory: .tools/zkg.d
-      shell: pwsh
-      run: |
-        zig build
+      - name: Setup Package Manager (MacOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          wget https://github.com/nektro/zigmod/releases/download/v20-0ef0ceb/zigmod-v20.0ef0ceb-x86_64-macos -O zigmod
+          chmod +x zigmod
 
-        Copy-Item ./zig-cache/bin/zkg* ..
+      - name: Setup Package Manager (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          wget https://github.com/nektro/zigmod/releases/download/v20-0ef0ceb/zigmod-v20.0ef0ceb-x86_64-linux -O zigmod
+          chmod +x zigmod
 
-    - name: Build
-      run: |
-        ./.tools/zkg fetch
-        zig build test
+      - name: Setup Package Manager (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          (new-object net.webclient).DownloadFile('https://github.com/nektro/zigmod/releases/download/v20-0ef0ceb/zigmod-v20.0ef0ceb-x86_64-windows.exe', 'zigmod.exe')
+
+      - name: Test
+        run: |
+          zigmod fetch
+          zig build test
