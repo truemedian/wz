@@ -28,7 +28,7 @@ fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     hash.final(&hashed_key);
 
     var encoded: [base64.Base64Encoder.calcSize(Sha1.digest_length)]u8 = undefined;
-    base64.standard_encoder.encode(&encoded, &hashed_key);
+    _ = base64.standard_encoder.encode(&encoded, &hashed_key);
 
     return mem.eql(u8, &encoded, received);
 }
@@ -79,7 +79,7 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
 
-            base64.standard_encoder.encode(&self.handshake_key, &raw_key);
+            _ = base64.standard_encoder.encode(&self.handshake_key, &raw_key);
 
             self.handshake_client.reset();
             try self.handshake_client.writeHead("GET", path);
