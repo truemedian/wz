@@ -11,10 +11,10 @@ pub fn build(b: *Builder) void {
     tests.setBuildMode(mode);
 
     if (@hasDecl(packages, "addAllTo")) { // zigmod
-        packages.addAllTo(lib_tests);
+        packages.addAllTo(tests);
     } else { // zkg
         inline for (std.meta.fields(@TypeOf(packages.pkgs))) |field| {
-            lib_tests.addPackage(@field(packages.pkgs, field.name));
+            tests.addPackage(@field(packages.pkgs, field.name));
         }
     }
 
