@@ -60,5 +60,5 @@ jobs:
 
       - name: Test
         run: |
-          zigmod fetch
+          ./zigmod fetch
           zig build test
