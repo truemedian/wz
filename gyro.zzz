@@ -1,0 +1,18 @@
+pkgs:
+  wz:
+    version: 0.0.0
+    license: MIT
+    source_url: "https://github.com/truemedian/wz"
+    tags:
+      websocket
+
+    root: src/main.zig
+    files:
+      README.md
+      LICENSE
+      src/*.zig
+      src/base/*.zig
+      src/parser/*.zig
+
+deps:
+  truemedian/hzzp: ^0.0.0

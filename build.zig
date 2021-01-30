@@ -10,7 +10,11 @@ pub fn build(b: *Builder) void {
     var tests = b.addTest("src/main.zig");
     tests.setBuildMode(mode);
 
-    packages.addAllTo(tests);
+    if (@hasDecl(packages, "addAllTo")) {
+        packages.addAllTo(tests);
+    } else {
+        packages.pkgs.addAllTo(tests);
+    }
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&tests.step);
