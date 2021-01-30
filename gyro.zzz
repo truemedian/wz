@@ -15,4 +15,4 @@ pkgs:
       src/parser/*.zig
 
 deps:
-  truemedian/hzzp: ^0.0.0
+  truemedian/hzzp: ^0.0.1
