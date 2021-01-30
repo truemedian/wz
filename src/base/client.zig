@@ -1,23 +1,32 @@
 const std = @import("std");
-const base64 = std.base64;
-const ascii = std.ascii;
-const time = std.time;
-const rand = std.rand;
-const mem = std.mem;
-
-const Sha1 = std.crypto.hash.Sha1;
-const assert = std.debug.assert;
 
 usingnamespace @import("common.zig");
 
-pub fn create(buffer: []u8, reader: anytype, writer: anytype) Client(@TypeOf(reader), @TypeOf(writer)) {
+const parser = @import("../main.zig").parser.client;
+
+const hzzp = @import("hzzp");
+
+const base64 = std.base64;
+const ascii = std.ascii;
+const math = std.math;
+const rand = std.rand;
+const time = std.time;
+const mem = std.mem;
+
+const Sha1 = std.crypto.hash.Sha1;
+
+const assert = std.debug.assert;
+
+pub fn create(buffer: []u8, reader: anytype, writer: anytype) BaseClient(@TypeOf(reader), @TypeOf(writer)) {
     assert(buffer.len >= 16);
 
-    return Client(@TypeOf(reader), @TypeOf(writer)).init(buffer, reader, writer);
+    return BaseClient(@TypeOf(reader), @TypeOf(writer)).init(buffer, reader, writer);
 }
 
-const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const handshake_key_length = 16;
+pub const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+pub const handshake_key_length = 16;
+pub const handshake_key_length_b64 = base64.Base64Encoder.calcSize(handshake_key_length);
+pub const encoded_key_length_b64 = base64.Base64Encoder.calcSize(Sha1.digest_length);
 
 fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     var hash = Sha1.init(.{});
@@ -27,128 +36,110 @@ fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     var hashed_key: [Sha1.digest_length]u8 = undefined;
     hash.final(&hashed_key);
 
-    var encoded: [base64.Base64Encoder.calcSize(Sha1.digest_length)]u8 = undefined;
+    var encoded: [encoded_key_length_b64]u8 = undefined;
     _ = base64.standard_encoder.encode(&encoded, &hashed_key);
 
     return mem.eql(u8, &encoded, received);
 }
 
-inline fn extractMaskByte(mask: u32, index: usize) u8 {
-    return @truncate(u8, mask >> @truncate(u5, (index % 4) * 8));
-}
-
-pub fn Client(comptime Reader: type, comptime Writer: type) type {
-    const ReaderError = if (@typeInfo(Reader) == .Pointer) @typeInfo(Reader).Pointer.child.Error else Reader.Error;
-    const WriterError = if (@typeInfo(Writer) == .Pointer) @typeInfo(Writer).Pointer.child.Error else Writer.Error;
-
-    const HzzpClient = hzzp.Client.Client(Reader, Writer);
+pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
+    const ParserType = parser.ClientParser(Reader);
+    const HttpClient = hzzp.base.client.BaseClient(Reader, Writer);
 
     return struct {
         const Self = @This();
 
-        read_buffer: []u8,
         prng: rand.DefaultPrng,
+        handshake_client: HttpClient,
+        handshake_key: [handshake_key_length_b64]u8 = undefined,
 
-        reader: Reader,
+        read_buffer: []u8,
+        parser: ParserType,
         writer: Writer,
 
         handshaken: bool = false,
-        handshake_client: HzzpClient,
-        handshake_key: [base64.Base64Encoder.calcSize(handshake_key_length)]u8 = undefined,
 
         current_mask: ?u32 = null,
         mask_index: usize = 0,
 
-        chunk_need: usize = 0,
-        chunk_read: usize = 0,
-        chunk_mask: ?u32 = undefined,
+        // Whether a reader is currently using the read_buffer. if true, parser.next should NOT be called since the
+        // reader expects all of the data.
+        self_contained: bool = false,
 
-        state: ParserState = .header,
+        pub fn init(buffer: []u8, input: Reader, output: Writer) Self {
+            const rand_seed = @truncate(u64, @bitCast(u128, time.nanoTimestamp()));
 
-        pub fn init(buffer: []u8, reader: Reader, writer: Writer) Self {
-            return Self{
+            return .{
+                .prng = rand.DefaultPrng.init(rand_seed),
+                .handshake_client = HttpClient.init(buffer, input, output),
+                .parser = ParserType.init(buffer, input),
                 .read_buffer = buffer,
-                .handshake_client = hzzp.Client.create(buffer, reader, writer),
-                .prng = rand.DefaultPrng.init(@bitCast(u64, time.milliTimestamp())),
-                .reader = reader,
-                .writer = writer,
+                .writer = output,
             };
         }
 
-        pub fn sendHandshakeHead(self: *Self, path: []const u8) WriterError!void {
+        pub fn handshakeStart(self: *Self, path: []const u8) Writer.Error!void {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
 
             _ = base64.standard_encoder.encode(&self.handshake_key, &raw_key);
 
-            self.handshake_client.reset();
-            try self.handshake_client.writeHead("GET", path);
-
+            try self.handshake_client.writeStatusLine("GET", path);
             try self.handshake_client.writeHeaderValue("Connection", "Upgrade");
             try self.handshake_client.writeHeaderValue("Upgrade", "websocket");
             try self.handshake_client.writeHeaderValue("Sec-WebSocket-Version", "13");
             try self.handshake_client.writeHeaderValue("Sec-WebSocket-Key", &self.handshake_key);
         }
 
-        pub fn sendHandshakeHeaderValue(self: *Self, name: []const u8, value: []const u8) WriterError!void {
+        pub fn handshakeAddHeaderValue(self: *Self, name: []const u8, value: []const u8) Writer.Error!void {
             return self.handshake_client.writeHeaderValue(name, value);
         }
 
-        pub fn sendHandshakeHeader(self: *Self, header: hzzp.Header) WriterError!void {
-            return self.handshake_client.writeHeader(header);
+        pub fn handshakeAddHeaderValueFormat(self: *Self, name: []const u8, comptime format: []const u8, args: anytype) Writer.Error!void {
+            return self.handshake_client.writeHeaderFormat(name, format, args);
         }
 
-        pub fn sendHandshakeHeaderArray(self: *Self, headers: hzzp.Headers) WriterError!void {
-            return self.handshake_client.writeHeaders(headers);
-        }
+        pub const HandshakeError = error{ WrongResponse, InvalidConnectionHeader, FailedChallenge } || HttpClient.NextError || Writer.Error;
+        pub fn handshakeFinish(self: *Self) HandshakeError!void {
+            try self.handshake_client.finishHeaders();
 
-        pub fn sendHandshakeHeadComplete(self: *Self) WriterError!void {
-            return self.handshake_client.writeHeadComplete();
-        }
-
-        pub const HandshakeError = ReaderError || HzzpClient.ReadError || error{ WrongResponse, InvalidConnectionHeader, FailedChallenge, ConnectionClosed };
-        pub fn waitForHandshake(self: *Self) HandshakeError!void {
             var got_upgrade_header: bool = false;
             var got_accept_header: bool = false;
 
-            while (try self.handshake_client.readEvent()) |event| {
+            while (try self.handshake_client.next()) |event| {
                 switch (event) {
-                    .status => |etc| {
-                        if (etc.code != 101) {
-                            return error.WrongResponse;
-                        }
+                    .status => |status| {
+                        if (status.code != 101) return error.WrongResponse;
                     },
-                    .header => |etc| {
-                        if (ascii.eqlIgnoreCase(etc.name, "connection")) {
+                    .header => |header| {
+                        if (ascii.eqlIgnoreCase(header.name, "connection")) {
                             got_upgrade_header = true;
 
-                            if (!ascii.eqlIgnoreCase(etc.value, "upgrade")) {
+                            if (!ascii.eqlIgnoreCase(header.value, "upgrade")) {
                                 return error.InvalidConnectionHeader;
                             }
-                        } else if (ascii.eqlIgnoreCase(etc.name, "sec-websocket-accept")) {
+                        } else if (ascii.eqlIgnoreCase(header.name, "sec-websocket-accept")) {
                             got_accept_header = true;
 
-                            if (!checkHandshakeKey(&self.handshake_key, etc.value)) {
+                            if (!checkHandshakeKey(&self.handshake_key, header.value)) {
                                 return error.FailedChallenge;
                             }
                         }
                     },
-                    .end => break,
-                    .invalid => return error.WrongResponse,
-                    .closed => return error.ConnectionClosed,
+                    .head_done => break,
+                    .payload => unreachable,
 
-                    else => {},
+                    .skip => {},
+                    .end => break,
                 }
             }
 
-            if (!got_upgrade_header) {
-                return error.InvalidConnectionHeader;
-            } else if (!got_accept_header) {
-                return error.FailedChallenge;
-            }
+            self.handshaken = true;
         }
 
-        pub fn writeMessageHeader(self: *Self, header: MessageHeader) WriterError!void {
+        pub fn writeHeader(self: *Self, header: MessageHeader) Writer.Error!void {
+            assert(self.handshaken);
+
             var bytes: [2]u8 = undefined;
             bytes[0] = @enumToInt(header.opcode);
             bytes[1] = 0;
@@ -191,223 +182,98 @@ pub fn Client(comptime Reader: type, comptime Writer: type) type {
             self.mask_index = 0;
         }
 
-        pub fn maskPayload(self: *Self, payload: []const u8, buffer: []u8) void {
-            assert(buffer.len >= payload.len);
-
-            if (self.current_mask) |mask| {
-                for (payload) |c, i| {
-                    buffer[i] = c ^ extractMaskByte(mask, i + self.mask_index);
-                }
-
-                self.mask_index += payload.len;
-            } else {
-                mem.copy(u8, buffer, payload);
-            }
-        }
-
-        pub fn writeUnmaskedPayload(self: *Self, payload: []const u8) WriterError!void {
+        pub fn writeChunkRaw(self: *Self, payload: []const u8) Writer.Error!void {
             try self.writer.writeAll(payload);
         }
 
-        pub fn writeMessagePayload(self: *Self, payload: []const u8) WriterError!void {
+        const mask_buffer_size = 1024;
+        pub fn writeChunk(self: *Self, payload: []const u8) Writer.Error!void {
             if (self.current_mask) |mask| {
-                var byte: [1]u8 = undefined;
+                var buffer: [mask_buffer_size]u8 = undefined;
+                var index: usize = 0;
 
                 for (payload) |c, i| {
-                    byte[0] = c ^ extractMaskByte(mask, i + self.mask_index);
+                    buffer[index] = c ^ parser.extractMaskByte(mask, i + self.mask_index);
 
-                    try self.writer.writeAll(&byte);
+                    index += 1;
+                    if (index == mask_buffer_size) {
+                        try self.writer.writeAll(&buffer);
+
+                        index = 0;
+                    }
+                }
+
+                if (index > 0) {
+                    try self.writer.writeAll(buffer[0..index]);
                 }
 
                 self.mask_index += payload.len;
-            } else {
-                unreachable;
+            } else unreachable;
+        }
+
+        pub fn next(self: *Self) ParserType.NextError!?Event {
+            assert(self.handshaken);
+            assert(!self.self_contained);
+
+            return self.parser.next();
+        }
+
+        pub const ReadNextError = ParserType.NextError;
+        pub fn readNextChunk(self: *Self, buffer: []u8) ReadNextError!?ChunkEvent {
+            if (self.parser.state != .chunk) return null;
+            assert(self.handshaken);
+            assert(!self.self_contained);
+
+            if (try self.parser.next()) |event| {
+                switch (event) {
+                    .chunk => |chunk| return chunk,
+                    .header => unreachable,
+                }
             }
         }
 
-        pub fn readEvent(self: *Self) ReaderError!?ClientEvent {
-            switch (self.state) {
-                .header => {
-                    const read_head_len = try self.reader.readAll(self.read_buffer[0..2]);
-                    if (read_head_len != 2) return ClientEvent.closed;
-
-                    const fin = self.read_buffer[0] & 0x80 == 0x80;
-                    const rsv1 = self.read_buffer[0] & 0x40 == 0x40;
-                    const rsv2 = self.read_buffer[0] & 0x20 == 0x20;
-                    const rsv3 = self.read_buffer[0] & 0x10 == 0x10;
-                    const opcode = @truncate(u4, self.read_buffer[0]);
-
-                    const masked = self.read_buffer[1] & 0x80 == 0x80;
-                    const check_len = @truncate(u7, self.read_buffer[1]);
-                    var len: u64 = check_len;
-
-                    var mask_index: u4 = 2;
-
-                    if (check_len == 127) {
-                        const read_len_len = try self.reader.readAll(self.read_buffer[2..10]);
-                        if (read_len_len != 8) return ClientEvent.closed;
-
-                        mask_index = 10;
-                        len = mem.readIntBig(u64, self.read_buffer[2..10]);
-
-                        self.chunk_need = len;
-                        self.chunk_read = 0;
-                    } else if (check_len == 126) {
-                        const read_len_len = try self.reader.readAll(self.read_buffer[2..4]);
-                        if (read_len_len != 2) return ClientEvent.closed;
-
-                        mask_index = 4;
-                        len = mem.readIntBig(u16, self.read_buffer[2..4]);
-
-                        self.chunk_need = len;
-                        self.chunk_read = 0;
-                    } else {
-                        self.chunk_need = check_len;
-                        self.chunk_read = 0;
-                    }
-
-                    if (masked) {
-                        const read_mask_len = try self.reader.readAll(self.read_buffer[mask_index .. mask_index + 4]);
-                        if (read_mask_len != 4) return ClientEvent.closed;
-
-                        self.chunk_mask = mem.readIntSliceBig(u32, self.read_buffer[mask_index .. mask_index + 4]);
-                    } else {
-                        self.chunk_mask = null;
-                    }
-
-                    self.state = .chunk;
-
-                    return ClientEvent{
-                        .header = .{
-                            .fin = fin,
-                            .rsv1 = rsv1,
-                            .rsv2 = rsv2,
-                            .rsv3 = rsv3,
-                            .opcode = @intToEnum(Opcode, opcode),
-                            .length = len,
-                            .mask = self.chunk_mask,
-                        },
-                    };
-                },
-                .chunk => {
-                    const left = self.chunk_need - self.chunk_read;
-
-                    if (left <= self.read_buffer.len) {
-                        const read_len = try self.reader.readAll(self.read_buffer[0..left]);
-                        if (read_len != left) return ClientEvent.closed;
-
-                        if (self.chunk_mask) |mask| {
-                            for (self.read_buffer[0..read_len]) |*c, i| {
-                                c.* = c.* ^ extractMaskByte(mask, i + self.chunk_read);
-                            }
-                        }
-
-                        self.state = .header;
-                        return ClientEvent{
-                            .chunk = .{
-                                .data = self.read_buffer[0..read_len],
-                                .final = true,
-                            },
-                        };
-                    } else {
-                        const read_len = try self.reader.read(self.read_buffer);
-                        if (read_len == 0) return ClientEvent.closed;
-
-                        if (self.chunk_mask) |mask| {
-                            for (self.read_buffer[0..read_len]) |*c, i| {
-                                c.* = c.* ^ extractMaskByte(mask, i + self.chunk_read);
-                            }
-                        }
-
-                        self.chunk_read += read_len;
-                        return ClientEvent{
-                            .chunk = .{
-                                .data = self.read_buffer[0..read_len],
-                            },
-                        };
-                    }
-                },
+        pub fn readNextChunkBuffer(self: *Self, buffer: []u8) ReadNextError!usize {
+            if (self.parser.state != .chunk) {
+                self.self_contained = false;
+                return 0;
             }
+
+            self.self_contained = true;
+
+            if (self.payload_index >= self.payload_size) {
+                if (try self.parser.next()) |event| {
+                    switch (event) {
+                        .chunk => |chunk| {
+                            self.payload_index = 0;
+                            self.payload_size = chunk.data.len;
+                        },
+
+                        .header => unreachable,
+                    }
+                } else unreachable;
+            }
+
+            const start = self.payload_index;
+            const size = std.math.min(buffer.len, self.payload_size - start);
+            const end = start + size;
+
+            mem.copy(u8, buffer[0..size], self.read_buffer[start..end]);
+            self.payload_index = end;
+
+            return size;
+        }
+
+        pub const PayloadReader = std.io.Reader(*Self, ReadNextError, readNextChunkBuffer);
+
+        pub fn reader(self: *Self) PayloadReader {
+            assert(self.parser.state == .chunk);
+
+            return .{ .context = self };
         }
     };
 }
 
 const testing = std.testing;
-const io = std.io;
-
-test "decodes a simple message" {
-    var read_buffer: [32]u8 = undefined;
-    var the_void: [1024]u8 = undefined;
-    var response = [_]u8{
-        0x82, 0x0d, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c, 0x20, 0x57, 0x6f,
-        0x72, 0x6c, 0x64, 0x21,
-    };
-
-    var reader = io.fixedBufferStream(&response).reader();
-    var writer = io.fixedBufferStream(&the_void).writer();
-
-    var client = create(&read_buffer, reader, writer);
-    client.handshaken = true;
-
-    try client.writeMessageHeader(.{
-        .opcode = .Binary,
-        .length = 9,
-    });
-
-    try client.writeUnmaskedPayload("aaabbbccc");
-
-    var header = (try client.readEvent()).?;
-    testing.expect(header == .header);
-    testing.expect(header.header.fin == true);
-    testing.expect(header.header.rsv1 == false);
-    testing.expect(header.header.rsv2 == false);
-    testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == .Binary);
-    testing.expect(header.header.length == 13);
-    testing.expect(header.header.mask == null);
-
-    var payload = (try client.readEvent()).?;
-    testing.expect(payload == .chunk);
-    testing.expect(payload.chunk.final == true);
-    testing.expect(mem.eql(u8, payload.chunk.data, "Hello, World!"));
-}
-
-test "decodes a masked message" {
-    var read_buffer: [32]u8 = undefined;
-    var the_void: [1024]u8 = undefined;
-    var response = [_]u8{
-        0x82, 0x8d, 0x12, 0x34, 0x56, 0x78, 0x30, 0x33, 0x58, 0x7e, 0x17,
-        0x7a, 0x14, 0x45, 0x17, 0x24, 0x58, 0x76, 0x59,
-    };
-
-    var reader = io.fixedBufferStream(&response).reader();
-    var writer = io.fixedBufferStream(&the_void).writer();
-
-    var client = create(&read_buffer, reader, writer);
-    client.handshaken = true;
-
-    try client.writeMessageHeader(.{
-        .opcode = .Binary,
-        .length = 9,
-    });
-
-    try client.writeUnmaskedPayload("aaabbbccc");
-
-    var header = (try client.readEvent()).?;
-    testing.expect(header == .header);
-    testing.expect(header.header.fin == true);
-    testing.expect(header.header.rsv1 == false);
-    testing.expect(header.header.rsv2 == false);
-    testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == .Binary);
-    testing.expect(header.header.length == 13);
-    testing.expect(header.header.mask.? == 0x12345678);
-
-    var payload = (try client.readEvent()).?;
-    testing.expect(payload == .chunk);
-    testing.expect(payload.chunk.final == true);
-    testing.expect(mem.eql(u8, payload.chunk.data, "Hello, World!"));
-}
 
 test "attempt echo on echo.websocket.org" {
     if (std.builtin.os.tag == .windows) return error.SkipZigTest;
@@ -419,20 +285,19 @@ test "attempt echo on echo.websocket.org" {
 
     var client = create(&buffer, socket.reader(), socket.writer());
 
-    try client.sendHandshakeHead("/");
-    try client.sendHandshakeHeaderValue("Host", "echo.websocket.org");
-    try client.sendHandshakeHeadComplete();
+    try client.handshakeStart("/");
+    try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
 
-    try client.waitForHandshake();
+    try client.handshakeFinish();
 
-    try client.writeMessageHeader(.{
+    try client.writeHeader(.{
         .opcode = .Binary,
         .length = 4,
     });
 
-    try client.writeMessagePayload("test");
+    try client.writeChunk("test");
 
-    var header = (try client.readEvent()).?;
+    var header = (try client.next()).?;
     testing.expect(header == .header);
     testing.expect(header.header.fin == true);
     testing.expect(header.header.rsv1 == false);
@@ -442,7 +307,7 @@ test "attempt echo on echo.websocket.org" {
     testing.expect(header.header.length == 4);
     testing.expect(header.header.mask == null);
 
-    var payload = (try client.readEvent()).?;
+    var payload = (try client.next()).?;
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
     testing.expect(mem.eql(u8, payload.chunk.data, "test"));

@@ -1,7 +1,0 @@
-hzzp:
-  root: src/main.zig
-  src:
-    github:
-      user: truemedian
-      repo: hzzp
-      ref: old

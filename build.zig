@@ -10,13 +10,7 @@ pub fn build(b: *Builder) void {
     var tests = b.addTest("src/main.zig");
     tests.setBuildMode(mode);
 
-    if (@hasDecl(packages, "addAllTo")) { // zigmod
-        packages.addAllTo(tests);
-    } else { // zkg
-        inline for (std.meta.fields(@TypeOf(packages.pkgs))) |field| {
-            tests.addPackage(@field(packages.pkgs, field.name));
-        }
-    }
+    packages.addAllTo(tests);
 
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&tests.step);

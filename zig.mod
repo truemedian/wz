@@ -4,4 +4,3 @@ main: src/main.zig
 dependencies:
 - type: git
   path: https://github.com/truemedian/hzzp
-  version: branch-old
