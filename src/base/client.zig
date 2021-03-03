@@ -62,6 +62,9 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         current_mask: ?u32 = null,
         mask_index: usize = 0,
 
+        payload_size: usize = 0,
+        payload_index: usize = 0,
+
         // Whether a reader is currently using the read_buffer. if true, parser.next should NOT be called since the
         // reader expects all of the data.
         self_contained: bool = false,
@@ -233,14 +236,14 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         }
 
         pub fn readNextChunkBuffer(self: *Self, buffer: []u8) ReadNextError!usize {
-            if (self.parser.state != .chunk) {
-                self.self_contained = false;
-                return 0;
-            }
-
-            self.self_contained = true;
-
             if (self.payload_index >= self.payload_size) {
+                if (self.parser.state != .chunk) {
+                    self.self_contained = false;
+                    return 0;
+                }
+
+                self.self_contained = true;
+
                 if (try self.parser.next()) |event| {
                     switch (event) {
                         .chunk => |chunk| {
