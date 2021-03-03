@@ -235,6 +235,13 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             }
         }
 
+        pub fn flushReader(self: *Self) ReadNextError!void {
+            var buffer: [256]u8 = undefined;
+            while (self.self_contained) {
+                _ = try self.readNextChunkBuffer(&buffer);
+            }
+        }
+
         pub fn readNextChunkBuffer(self: *Self, buffer: []u8) ReadNextError!usize {
             if (self.payload_index >= self.payload_size) {
                 if (self.parser.state != .chunk) {
@@ -314,4 +321,52 @@ test "attempt echo on echo.websocket.org" {
     testing.expect(payload == .chunk);
     testing.expect(payload.chunk.final == true);
     testing.expect(mem.eql(u8, payload.chunk.data, "test"));
+}
+
+test "reader() and flushReader()" {
+    if (std.builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
+    defer socket.close();
+
+    const payload = "0123456789ABCDEF" ** 32;
+    // Intentionally smaller buffer to require multiple chunks
+    var buffer: [payload.len / 2]u8 = undefined;
+
+    var client = create(&buffer, socket.reader(), socket.writer());
+
+    try client.handshakeStart("/");
+    try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
+
+    try client.handshakeFinish();
+
+    try client.writeHeader(.{
+        .opcode = .Binary,
+        .length = payload.len,
+    });
+
+    try client.writeChunk(payload);
+
+    var header = (try client.next()).?;
+    testing.expect(header == .header);
+    testing.expect(header.header.fin == true);
+    testing.expect(header.header.rsv1 == false);
+    testing.expect(header.header.rsv2 == false);
+    testing.expect(header.header.rsv3 == false);
+    testing.expect(header.header.opcode == .Binary);
+    testing.expect(header.header.length == payload.len);
+    testing.expect(header.header.mask == null);
+
+    testing.expect(client.parser.state == .chunk);
+
+    const reader = client.reader();
+    testing.expect((try reader.readByte()) == '0');
+    testing.expect((try reader.readByte()) == '1');
+    testing.expect((try reader.readByte()) == '2');
+    try client.flushReader();
+    testing.expectError(error.EndOfStream, reader.readByte());
+    testing.expect(client.parser.state != .chunk);
+
+    // Allow multiple flushes to make cleanup easier
+    try client.flushReader();
 }
