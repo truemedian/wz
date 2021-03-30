@@ -25,8 +25,8 @@ pub fn create(buffer: []u8, reader: anytype, writer: anytype) BaseClient(@TypeOf
 
 pub const websocket_guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 pub const handshake_key_length = 16;
-pub const handshake_key_length_b64 = base64.Base64Encoder.calcSize(handshake_key_length);
-pub const encoded_key_length_b64 = base64.Base64Encoder.calcSize(Sha1.digest_length);
+pub const handshake_key_length_b64 = base64.standard.Encoder.calcSize(handshake_key_length);
+pub const encoded_key_length_b64 = base64.standard.Encoder.calcSize(Sha1.digest_length);
 
 fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     var hash = Sha1.init(.{});
@@ -37,7 +37,7 @@ fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     hash.final(&hashed_key);
 
     var encoded: [encoded_key_length_b64]u8 = undefined;
-    _ = base64.standard_encoder.encode(&encoded, &hashed_key);
+    _ = base64.standard.Encoder.encode(&encoded, &hashed_key);
 
     return mem.eql(u8, &encoded, received);
 }
