@@ -1,6 +1,6 @@
 pkgs:
   wz:
-    version: 0.0.0
+    version: 0.0.1
     license: MIT
     source_url: "https://github.com/truemedian/wz"
     tags:
@@ -15,4 +15,4 @@ pkgs:
       src/parser/*.zig
 
 deps:
-  truemedian/hzzp: ^0.0.1
+  truemedian/hzzp: ^0.0.2
