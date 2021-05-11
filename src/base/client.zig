@@ -308,19 +308,19 @@ test "attempt echo on echo.websocket.org" {
     try client.writeChunk("test");
 
     var header = (try client.next()).?;
-    testing.expect(header == .header);
-    testing.expect(header.header.fin == true);
-    testing.expect(header.header.rsv1 == false);
-    testing.expect(header.header.rsv2 == false);
-    testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == .Binary);
-    testing.expect(header.header.length == 4);
-    testing.expect(header.header.mask == null);
+    try testing.expect(header == .header);
+    try testing.expect(header.header.fin == true);
+    try testing.expect(header.header.rsv1 == false);
+    try testing.expect(header.header.rsv2 == false);
+    try testing.expect(header.header.rsv3 == false);
+    try testing.expect(header.header.opcode == .Binary);
+    try testing.expect(header.header.length == 4);
+    try testing.expect(header.header.mask == null);
 
     var payload = (try client.next()).?;
-    testing.expect(payload == .chunk);
-    testing.expect(payload.chunk.final == true);
-    testing.expect(mem.eql(u8, payload.chunk.data, "test"));
+    try testing.expect(payload == .chunk);
+    try testing.expect(payload.chunk.final == true);
+    try testing.expect(mem.eql(u8, payload.chunk.data, "test"));
 }
 
 test "reader() and flushReader()" {
@@ -348,24 +348,24 @@ test "reader() and flushReader()" {
     try client.writeChunk(payload);
 
     var header = (try client.next()).?;
-    testing.expect(header == .header);
-    testing.expect(header.header.fin == true);
-    testing.expect(header.header.rsv1 == false);
-    testing.expect(header.header.rsv2 == false);
-    testing.expect(header.header.rsv3 == false);
-    testing.expect(header.header.opcode == .Binary);
-    testing.expect(header.header.length == payload.len);
-    testing.expect(header.header.mask == null);
+    try testing.expect(header == .header);
+    try testing.expect(header.header.fin == true);
+    try testing.expect(header.header.rsv1 == false);
+    try testing.expect(header.header.rsv2 == false);
+    try testing.expect(header.header.rsv3 == false);
+    try testing.expect(header.header.opcode == .Binary);
+    try testing.expect(header.header.length == payload.len);
+    try testing.expect(header.header.mask == null);
 
-    testing.expect(client.parser.state == .chunk);
+    try testing.expect(client.parser.state == .chunk);
 
     const reader = client.reader();
-    testing.expect((try reader.readByte()) == '0');
-    testing.expect((try reader.readByte()) == '1');
-    testing.expect((try reader.readByte()) == '2');
+    try testing.expect((try reader.readByte()) == '0');
+    try testing.expect((try reader.readByte()) == '1');
+    try testing.expect((try reader.readByte()) == '2');
     try client.flushReader();
-    testing.expectError(error.EndOfStream, reader.readByte());
-    testing.expect(client.parser.state != .chunk);
+    try testing.expectError(error.EndOfStream, reader.readByte());
+    try testing.expect(client.parser.state != .chunk);
 
     // Allow multiple flushes to make cleanup easier
     try client.flushReader();
