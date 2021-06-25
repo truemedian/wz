@@ -222,7 +222,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         }
 
         pub const ReadNextError = ParserType.NextError;
-        pub fn readNextChunk(self: *Self, buffer: []u8) ReadNextError!?ChunkEvent {
+        pub fn readNextChunk(self: *Self) ReadNextError!?ChunkEvent {
             if (self.parser.state != .chunk) return null;
             assert(self.handshaken);
             assert(!self.self_contained);
