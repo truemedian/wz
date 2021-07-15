@@ -57,6 +57,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         parser: ParserType,
         writer: Writer,
 
+        got_upgrade_header: bool = false,
+        got_accept_header: bool = false,
         handshaken: bool = false,
 
         current_mask: ?u32 = null,
@@ -102,13 +104,12 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             return self.handshake_client.writeHeaderFormat(name, format, args);
         }
 
-        pub const HandshakeError = error{ WrongResponse, InvalidConnectionHeader, FailedChallenge } || HttpClient.NextError || Writer.Error;
-        pub fn handshakeFinish(self: *Self) HandshakeError!void {
+        pub fn handshakeFinishHeaders(self: *Self) Writer.Error!void {
             try self.handshake_client.finishHeaders();
+        }
 
-            var got_upgrade_header: bool = false;
-            var got_accept_header: bool = false;
-
+        pub const HandshakeError = error{ WrongResponse, InvalidConnectionHeader, FailedChallenge } || HttpClient.NextError;
+        pub fn handshakeAccept(self: *Self) HandshakeError!bool {
             while (try self.handshake_client.next()) |event| {
                 switch (event) {
                     .status => |status| {
@@ -116,13 +117,13 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                     },
                     .header => |header| {
                         if (ascii.eqlIgnoreCase(header.name, "connection")) {
-                            got_upgrade_header = true;
+                            self.got_upgrade_header = true;
 
                             if (!ascii.eqlIgnoreCase(header.value, "upgrade")) {
                                 return error.InvalidConnectionHeader;
                             }
                         } else if (ascii.eqlIgnoreCase(header.name, "sec-websocket-accept")) {
-                            got_accept_header = true;
+                            self.got_accept_header = true;
 
                             if (!checkHandshakeKey(&self.handshake_key, header.value)) {
                                 return error.FailedChallenge;
@@ -137,7 +138,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 }
             }
 
-            self.handshaken = true;
+            self.handshaken = (self.got_upgrade_header and self.got_accept_header);
+            return self.handshaken;
         }
 
         pub fn writeHeader(self: *Self, header: MessageHeader) Writer.Error!void {
@@ -298,7 +300,8 @@ test "attempt echo on echo.websocket.org" {
     try client.handshakeStart("/");
     try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
 
-    try client.handshakeFinish();
+    try client.handshakeFinishHeaders();
+    _ = try client.handshakeAccept();
 
     try client.writeHeader(.{
         .opcode = .Binary,
@@ -338,7 +341,8 @@ test "reader() and flushReader()" {
     try client.handshakeStart("/");
     try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
 
-    try client.handshakeFinish();
+    try client.handshakeFinishHeaders();
+    _ = try client.handshakeAccept();
 
     try client.writeHeader(.{
         .opcode = .Binary,
