@@ -288,7 +288,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 const testing = std.testing;
 
 test "attempt echo on echo.websocket.org" {
-    if (std.builtin.os.tag == .windows) return error.SkipZigTest;
+    // TODO: websocket.org discontined, need to find a new echo server.
+    if (true) return error.SkipZigTest;
 
     var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
     defer socket.close();
@@ -327,7 +328,8 @@ test "attempt echo on echo.websocket.org" {
 }
 
 test "reader() and flushReader()" {
-    if (std.builtin.os.tag == .windows) return error.SkipZigTest;
+    // TODO: websocket.org discontined, need to find a new echo server.
+    if (true) return error.SkipZigTest;
 
     var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
     defer socket.close();
