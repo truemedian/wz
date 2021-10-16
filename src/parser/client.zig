@@ -1,6 +1,7 @@
 const std = @import("std");
 
-usingnamespace @import("common.zig");
+const wz = @import("../main.zig");
+const util = @import("../util.zig");
 
 const base64 = std.base64;
 const ascii = std.ascii;
@@ -15,11 +16,21 @@ pub fn extractMaskByte(mask: u32, index: usize) u8 {
     return @truncate(u8, mask >> @truncate(u5, (index % 4) * 8));
 }
 
-pub fn create(buffer: []u8, reader: anytype) Client(@TypeOf(reader)) {
+pub fn create(buffer: []u8, reader: anytype) ClientParser(@TypeOf(reader)) {
     assert(buffer.len >= 16);
 
     return ClientParser(@TypeOf(reader)).init(buffer, reader);
 }
+
+pub const ChunkEvent = struct {
+    data: []const u8,
+    final: bool = false,
+};
+
+pub const Event = union(enum) {
+    header: wz.MessageHeader,
+    chunk: ChunkEvent,
+};
 
 pub fn ClientParser(comptime Reader: type) type {
     return struct {
@@ -36,7 +47,7 @@ pub fn ClientParser(comptime Reader: type) type {
         chunk_read: usize = 0,
         chunk_mask: ?u32 = null,
 
-        state: ParserState = .header,
+        state: util.ParserState = .header,
 
         pub fn init(buffer: []u8, reader: Reader) Self {
             return .{
@@ -113,7 +124,7 @@ pub fn ClientParser(comptime Reader: type) type {
                             .rsv1 = rsv1,
                             .rsv2 = rsv2,
                             .rsv3 = rsv3,
-                            .opcode = @intToEnum(Opcode, opcode),
+                            .opcode = @intToEnum(wz.Opcode, opcode),
                             .length = len,
                             .mask = self.chunk_mask,
                         },

@@ -1,7 +1,6 @@
 const std = @import("std");
 
-usingnamespace @import("common.zig");
-
+const wz = @import("../main.zig");
 const parser = @import("../main.zig").parser.client;
 
 const hzzp = @import("hzzp");
@@ -142,7 +141,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             return self.handshaken;
         }
 
-        pub fn writeHeader(self: *Self, header: MessageHeader) Writer.Error!void {
+        pub fn writeHeader(self: *Self, header: wz.MessageHeader) Writer.Error!void {
             assert(self.handshaken);
 
             var bytes: [2]u8 = undefined;
@@ -216,7 +215,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             } else unreachable;
         }
 
-        pub fn next(self: *Self) ParserType.NextError!?Event {
+        pub fn next(self: *Self) ParserType.NextError!?parser.Event {
             assert(self.handshaken);
             assert(!self.self_contained);
 
@@ -224,7 +223,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         }
 
         pub const ReadNextError = ParserType.NextError;
-        pub fn readNextChunk(self: *Self) ReadNextError!?ChunkEvent {
+        pub fn readNextChunk(self: *Self) ReadNextError!?parser.ChunkEvent {
             if (self.parser.state != .chunk) return null;
             assert(self.handshaken);
             assert(!self.self_contained);
@@ -288,7 +287,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 const testing = std.testing;
 
 test "attempt echo on echo.websocket.org" {
-    // TODO: websocket.org discontined, need to find a new echo server.
+    // TODO: websocket.org discontinued, need to find a new echo server.
     if (true) return error.SkipZigTest;
 
     var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
@@ -328,7 +327,7 @@ test "attempt echo on echo.websocket.org" {
 }
 
 test "reader() and flushReader()" {
-    // TODO: websocket.org discontined, need to find a new echo server.
+    // TODO: websocket.org discontinued, need to find a new echo server.
     if (true) return error.SkipZigTest;
 
     var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);

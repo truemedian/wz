@@ -6,6 +6,8 @@
 
 An I/O agnostic WebSocket 1.3 library for Zig.
 
+Currently untested, contributions towards a test suite are appreciated.
+
 ## Features
 
 * Performs no allocations, uses a single buffer for all parsing.

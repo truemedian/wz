@@ -17,13 +17,3 @@ pub const Opcode = enum(u4) {
     Pong = 0x0a,
     _,
 };
-
-pub const ChunkEvent = struct {
-    data: []const u8,
-    final: bool = false,
-};
-
-pub const Event = union(enum) {
-    header: MessageHeader,
-    chunk: ChunkEvent,
-};
