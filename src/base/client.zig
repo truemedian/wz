@@ -319,3 +319,40 @@ test "test server required" {
     std.testing.refAllDecls(DefaultHandshakeClient(Reader, Writer));
     std.testing.refAllDecls(BaseClient(Reader, Writer));
 }
+
+test "example usage" {
+    if (true) return error.SkipZigTest;
+
+    var buffer: [256]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+
+    const reader = stream.reader();
+    const writer = stream.writer();
+
+    const Reader = @TypeOf(reader);
+    const Writer = @TypeOf(writer);
+
+    const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
+    const prng = std.rand.DefaultPrng.init(seed);
+
+    var handshake = DefaultHandshakeClient(Reader, Writer).init(&buffer, reader, writer, prng);
+    try handshake.writeStatusLine("/");
+    try handshake.writeHeaderValue("Host", "echo.websocket.org");
+    try handshake.finishHeaders();
+
+    if (try handshake.wait()) {
+        var client = create(&buffer, reader, writer);
+
+        try client.writeHeader(.{
+            .opcode = .binary,
+            .length = 4,
+        });
+
+        try client.writeChunk("abcd");
+
+        while (try client.next()) |event| {
+            _ = event;
+            // directly from the parser
+        }
+    }
+}
