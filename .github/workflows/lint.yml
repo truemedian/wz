@@ -24,7 +24,7 @@ jobs:
           version: master
 
       - name: Lint Source
-        run: zig fmt src
+        run: zig fmt src --check --ast-check
 
       - name: Lint Build
-        run: zig fmt build.zig
+        run: zig fmt build.zig --check --ast-check

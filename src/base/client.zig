@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const wz = @import("../main.zig");
-const parser = @import("../main.zig").parser.client;
+const parser = @import("../main.zig").parser.message;
 
 const hzzp = @import("hzzp");
 
@@ -41,75 +41,77 @@ fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     return mem.eql(u8, &encoded, received);
 }
 
-pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
-    const ParserType = parser.ClientParser(Reader);
+pub fn SeededHandshakeClient(comptime Reader: type, comptime Writer: type, comptime RandomGenerator: type) type {
     const HttpClient = hzzp.base.client.BaseClient(Reader, Writer);
 
     return struct {
         const Self = @This();
+        pub const Prng = RandomGenerator;
 
-        prng: rand.DefaultPrng,
-        handshake_client: HttpClient,
+        prng: RandomGenerator,
+        client: HttpClient,
         handshake_key: [handshake_key_length_b64]u8 = undefined,
-
-        read_buffer: []u8,
-        parser: ParserType,
-        writer: Writer,
 
         got_upgrade_header: bool = false,
         got_accept_header: bool = false,
         handshaken: bool = false,
 
-        current_mask: ?u32 = null,
-        mask_index: usize = 0,
-
-        payload_size: usize = 0,
-        payload_index: usize = 0,
-
-        // Whether a reader is currently using the read_buffer. if true, parser.next should NOT be called since the
-        // reader expects all of the data.
-        self_contained: bool = false,
-
-        pub fn init(buffer: []u8, input: Reader, output: Writer) Self {
-            const rand_seed = @truncate(u64, @bitCast(u128, time.nanoTimestamp()));
-
+        pub fn init(buffer: []u8, input: Reader, output: Writer, prng: RandomGenerator) Self {
             return .{
-                .prng = rand.DefaultPrng.init(rand_seed),
-                .handshake_client = HttpClient.init(buffer, input, output),
-                .parser = ParserType.init(buffer, input),
-                .read_buffer = buffer,
-                .writer = output,
+                .prng = prng,
+                .client = HttpClient.init(buffer, input, output),
             };
         }
 
-        pub fn handshakeStart(self: *Self, path: []const u8) Writer.Error!void {
+        pub fn generateKey(self: *Self) void {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.random.bytes(&raw_key);
 
             _ = base64.standard_encoder.encode(&self.handshake_key, &raw_key);
-
-            try self.handshake_client.writeStatusLine("GET", path);
-            try self.handshake_client.writeHeaderValue("Connection", "Upgrade");
-            try self.handshake_client.writeHeaderValue("Upgrade", "websocket");
-            try self.handshake_client.writeHeaderValue("Sec-WebSocket-Version", "13");
-            try self.handshake_client.writeHeaderValue("Sec-WebSocket-Key", &self.handshake_key);
         }
 
-        pub fn handshakeAddHeaderValue(self: *Self, name: []const u8, value: []const u8) Writer.Error!void {
-            return self.handshake_client.writeHeaderValue(name, value);
+        fn addRequiredHeaders(self: *Self) Writer.Error!void {
+            self.generateKey();
+
+            try self.client.writeHeaderValue("Connection", "Upgrade");
+            try self.client.writeHeaderValue("Upgrade", "websocket");
+            try self.client.writeHeaderValue("Sec-WebSocket-Version", "13");
+            try self.client.writeHeaderValue("Sec-WebSocket-Key", &self.handshake_key);
         }
 
-        pub fn handshakeAddHeaderValueFormat(self: *Self, name: []const u8, comptime format: []const u8, args: anytype) Writer.Error!void {
-            return self.handshake_client.writeHeaderFormat(name, format, args);
+        pub fn writeStatusLine(self: *Self, path: []const u8) Writer.Error!void {
+            try self.client.writeStatusLine("GET", path);
         }
 
-        pub fn handshakeFinishHeaders(self: *Self) Writer.Error!void {
-            try self.handshake_client.finishHeaders();
+        pub fn writeStatusLineParts(self: *Self, path: []const u8, query: ?[]const u8, fragment: ?[]const u8) Writer.Error!void {
+            try self.client.writeStatusLineParts("GET", path, query, fragment);
+        }
+
+        pub fn writeHeaderValue(self: *Self, name: []const u8, value: []const u8) Writer.Error!void {
+            return self.client.writeHeaderValue(name, value);
+        }
+
+        pub fn writeHeaderFormat(self: *Self, name: []const u8, comptime format: []const u8, args: anytype) Writer.Error!void {
+            return self.client.writeHeaderFormat(name, format, args);
+        }
+
+        pub fn writeHeader(self: *Self, header: hzzp.Header) Writer.Error!void {
+            return self.client.writeHeader(header);
+        }
+
+        pub fn writeHeaders(self: *Self, headers: hzzp.HeadersSlice) Writer.Error!void {
+            return self.client.writeHeaders(headers);
+        }
+
+        pub fn finishHeaders(self: *Self) Writer.Error!void {
+            try self.addRequiredHeaders();
+
+            try self.client.finishHeaders();
         }
 
         pub const HandshakeError = error{ WrongResponse, InvalidConnectionHeader, FailedChallenge } || HttpClient.NextError;
-        pub fn handshakeAccept(self: *Self) HandshakeError!bool {
-            while (try self.handshake_client.next()) |event| {
+        pub fn wait(self: *Self) HandshakeError!bool {
+            while (try self.client.next()) |event| {
                 switch (event) {
                     .status => |status| {
                         if (status.code != 101) return error.WrongResponse;
@@ -137,52 +139,79 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 }
             }
 
-            self.handshaken = (self.got_upgrade_header and self.got_accept_header);
-            return self.handshaken;
+            return self.got_upgrade_header and self.got_accept_header;
+        }
+    };
+}
+
+pub fn DefaultHandshakeClient(comptime Reader: type, comptime Writer: type) type {
+    return SeededHandshakeClient(Reader, Writer, std.rand.DefaultPrng);
+}
+
+pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
+    const ParserType = parser.MessageParser(Reader);
+
+    return struct {
+        const Self = @This();
+
+        read_buffer: []u8,
+        parser: ParserType,
+        writer: Writer,
+
+        current_mask: [4]u8 = std.mem.zeroes([4]u8),
+        mask_index: usize = 0,
+
+        payload_size: usize = 0,
+        payload_index: usize = 0,
+
+        // Whether a reader is currently using the read_buffer. if true, parser.next should NOT be called since the
+        // reader expects all of the data.
+        self_contained: bool = false,
+
+        pub fn init(buffer: []u8, input: Reader, output: Writer) Self {
+            return .{
+                .parser = ParserType.init(buffer, input),
+                .read_buffer = buffer,
+                .writer = output,
+            };
         }
 
-        pub fn writeHeader(self: *Self, header: wz.MessageHeader) Writer.Error!void {
-            assert(self.handshaken);
+        pub const WriteHeaderError = error{MissingMask} || Writer.Error;
+        pub fn writeHeader(self: *Self, header: wz.MessageHeader) WriteHeaderError!void {
+            var bytes: [14]u8 = undefined;
+            var len: usize = 2;
 
-            var bytes: [2]u8 = undefined;
             bytes[0] = @enumToInt(header.opcode);
-            bytes[1] = 0;
 
             if (header.fin) bytes[0] |= 0x80;
             if (header.rsv1) bytes[0] |= 0x40;
             if (header.rsv2) bytes[0] |= 0x20;
             if (header.rsv3) bytes[0] |= 0x10;
 
-            const mask = header.mask orelse self.prng.random.int(u32);
+            // client messages MUST be masked.
+            if (header.mask == null) return error.MissingMask;
             bytes[1] |= 0x80;
 
             if (header.length < 126) {
                 bytes[1] |= @truncate(u8, header.length);
-                try self.writer.writeAll(&bytes);
             } else if (header.length < 0x10000) {
                 bytes[1] |= 126;
-                try self.writer.writeAll(&bytes);
 
-                var len: [2]u8 = undefined;
-                mem.writeIntBig(u16, &len, @truncate(u16, header.length));
-
-                try self.writer.writeAll(&len);
+                mem.writeIntBig(u16, bytes[2..4], @truncate(u16, header.length));
+                len += 2;
             } else {
                 bytes[1] |= 127;
-                try self.writer.writeAll(&bytes);
 
-                var len: [8]u8 = undefined;
-                mem.writeIntBig(u64, &len, header.length);
-
-                try self.writer.writeAll(&len);
+                mem.writeIntBig(u64, bytes[2..10], header.length);
+                len += 8;
             }
 
-            var mask_bytes: [4]u8 = undefined;
-            mem.writeIntLittle(u32, &mask_bytes, mask);
+            std.mem.copy(u8, bytes[len .. len + 4], &header.mask.?);
+            len += 4;
 
-            try self.writer.writeAll(&mask_bytes);
+            try self.writer.writeAll(bytes[0..len]);
 
-            self.current_mask = mask;
+            self.current_mask = header.mask.?;
             self.mask_index = 0;
         }
 
@@ -192,31 +221,28 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 
         const mask_buffer_size = 1024;
         pub fn writeChunk(self: *Self, payload: []const u8) Writer.Error!void {
-            if (self.current_mask) |mask| {
-                var buffer: [mask_buffer_size]u8 = undefined;
-                var index: usize = 0;
+            var buffer: [mask_buffer_size]u8 = undefined;
+            var index: usize = 0;
 
-                for (payload) |c, i| {
-                    buffer[index] = c ^ parser.extractMaskByte(mask, i + self.mask_index);
+            for (payload) |c, i| {
+                buffer[index] = c ^ self.current_mask[(i + self.mask_index) % 4];
 
-                    index += 1;
-                    if (index == mask_buffer_size) {
-                        try self.writer.writeAll(&buffer);
+                index += 1;
+                if (index == mask_buffer_size) {
+                    try self.writer.writeAll(&buffer);
 
-                        index = 0;
-                    }
+                    index = 0;
                 }
+            }
 
-                if (index > 0) {
-                    try self.writer.writeAll(buffer[0..index]);
-                }
+            if (index > 0) {
+                try self.writer.writeAll(buffer[0..index]);
+            }
 
-                self.mask_index += payload.len;
-            } else unreachable;
+            self.mask_index += payload.len;
         }
 
         pub fn next(self: *Self) ParserType.NextError!?parser.Event {
-            assert(self.handshaken);
             assert(!self.self_contained);
 
             return self.parser.next();
@@ -225,7 +251,6 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         pub const ReadNextError = ParserType.NextError;
         pub fn readNextChunk(self: *Self) ReadNextError!?parser.ChunkEvent {
             if (self.parser.state != .chunk) return null;
-            assert(self.handshaken);
             assert(!self.self_contained);
 
             if (try self.parser.next()) |event| {
@@ -234,6 +259,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                     .header => unreachable,
                 }
             }
+
+            return null;
         }
 
         pub fn flushReader(self: *Self) ReadNextError!void {
@@ -264,11 +291,10 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 } else unreachable;
             }
 
-            const start = self.payload_index;
-            const size = std.math.min(buffer.len, self.payload_size - start);
-            const end = start + size;
+            const size = std.math.min(buffer.len, self.payload_size - self.payload_index);
+            const end = self.payload_index + size;
 
-            mem.copy(u8, buffer[0..size], self.read_buffer[start..end]);
+            mem.copy(u8, buffer[0..size], self.read_buffer[self.payload_index..end]);
             self.payload_index = end;
 
             return size;
@@ -286,92 +312,10 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
 
 const testing = std.testing;
 
-test "attempt echo on echo.websocket.org" {
-    // TODO: websocket.org discontinued, need to find a new echo server.
-    if (true) return error.SkipZigTest;
+test "test server required" {
+    const Reader = std.io.FixedBufferStream([]const u8).Reader;
+    const Writer = std.io.FixedBufferStream([]u8).Writer;
 
-    var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
-    defer socket.close();
-
-    var buffer: [4096]u8 = undefined;
-
-    var client = create(&buffer, socket.reader(), socket.writer());
-
-    try client.handshakeStart("/");
-    try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
-
-    try client.handshakeFinishHeaders();
-    _ = try client.handshakeAccept();
-
-    try client.writeHeader(.{
-        .opcode = .Binary,
-        .length = 4,
-    });
-
-    try client.writeChunk("test");
-
-    var header = (try client.next()).?;
-    try testing.expect(header == .header);
-    try testing.expect(header.header.fin == true);
-    try testing.expect(header.header.rsv1 == false);
-    try testing.expect(header.header.rsv2 == false);
-    try testing.expect(header.header.rsv3 == false);
-    try testing.expect(header.header.opcode == .Binary);
-    try testing.expect(header.header.length == 4);
-    try testing.expect(header.header.mask == null);
-
-    var payload = (try client.next()).?;
-    try testing.expect(payload == .chunk);
-    try testing.expect(payload.chunk.final == true);
-    try testing.expect(mem.eql(u8, payload.chunk.data, "test"));
-}
-
-test "reader() and flushReader()" {
-    // TODO: websocket.org discontinued, need to find a new echo server.
-    if (true) return error.SkipZigTest;
-
-    var socket = try std.net.tcpConnectToHost(testing.allocator, "echo.websocket.org", 80);
-    defer socket.close();
-
-    const payload = "0123456789ABCDEF" ** 32;
-    // Intentionally smaller buffer to require multiple chunks
-    var buffer: [payload.len / 2]u8 = undefined;
-
-    var client = create(&buffer, socket.reader(), socket.writer());
-
-    try client.handshakeStart("/");
-    try client.handshakeAddHeaderValue("Host", "echo.websocket.org");
-
-    try client.handshakeFinishHeaders();
-    _ = try client.handshakeAccept();
-
-    try client.writeHeader(.{
-        .opcode = .Binary,
-        .length = payload.len,
-    });
-
-    try client.writeChunk(payload);
-
-    var header = (try client.next()).?;
-    try testing.expect(header == .header);
-    try testing.expect(header.header.fin == true);
-    try testing.expect(header.header.rsv1 == false);
-    try testing.expect(header.header.rsv2 == false);
-    try testing.expect(header.header.rsv3 == false);
-    try testing.expect(header.header.opcode == .Binary);
-    try testing.expect(header.header.length == payload.len);
-    try testing.expect(header.header.mask == null);
-
-    try testing.expect(client.parser.state == .chunk);
-
-    const reader = client.reader();
-    try testing.expect((try reader.readByte()) == '0');
-    try testing.expect((try reader.readByte()) == '1');
-    try testing.expect((try reader.readByte()) == '2');
-    try client.flushReader();
-    try testing.expectError(error.EndOfStream, reader.readByte());
-    try testing.expect(client.parser.state != .chunk);
-
-    // Allow multiple flushes to make cleanup easier
-    try client.flushReader();
+    std.testing.refAllDecls(DefaultHandshakeClient(Reader, Writer));
+    std.testing.refAllDecls(BaseClient(Reader, Writer));
 }

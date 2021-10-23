@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const client = @import("client.zig");
+pub const message = @import("message.zig");
 
 comptime {
     std.testing.refAllDecls(@This());
