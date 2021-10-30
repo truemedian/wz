@@ -41,14 +41,14 @@ fn checkHandshakeKey(original: []const u8, received: []const u8) bool {
     return mem.eql(u8, &encoded, received);
 }
 
-pub fn SeededHandshakeClient(comptime Reader: type, comptime Writer: type, comptime RandomGenerator: type) type {
+pub fn HandshakeClient(comptime Reader: type, comptime Writer: type) type {
     const HttpClient = hzzp.base.client.BaseClient(Reader, Writer);
+    const WzClient = BaseClient(Reader, Writer);
 
     return struct {
         const Self = @This();
-        pub const Prng = RandomGenerator;
 
-        prng: RandomGenerator,
+        prng: std.rand.Random,
         client: HttpClient,
         handshake_key: [handshake_key_length_b64]u8 = undefined,
 
@@ -56,7 +56,7 @@ pub fn SeededHandshakeClient(comptime Reader: type, comptime Writer: type, compt
         got_accept_header: bool = false,
         handshaken: bool = false,
 
-        pub fn init(buffer: []u8, input: Reader, output: Writer, prng: RandomGenerator) Self {
+        pub fn init(buffer: []u8, input: Reader, output: Writer, prng: std.rand.Random) Self {
             return .{
                 .prng = prng,
                 .client = HttpClient.init(buffer, input, output),
@@ -65,7 +65,7 @@ pub fn SeededHandshakeClient(comptime Reader: type, comptime Writer: type, compt
 
         pub fn generateKey(self: *Self) void {
             var raw_key: [handshake_key_length]u8 = undefined;
-            self.prng.random.bytes(&raw_key);
+            self.prng.bytes(&raw_key);
 
             _ = base64.standard_encoder.encode(&self.handshake_key, &raw_key);
         }
@@ -139,13 +139,16 @@ pub fn SeededHandshakeClient(comptime Reader: type, comptime Writer: type, compt
                 }
             }
 
-            return self.got_upgrade_header and self.got_accept_header;
+            self.handshaken = self.got_upgrade_header and self.got_accept_header;
+            return self.handshaken;
+        }
+
+        pub fn socket(self: Self) WzClient {
+            assert(self.handshaken);
+
+            return WzClient.init(self.client.read_buffer, self.client.parser.reader, self.client.writer, self.prng);
         }
     };
-}
-
-pub fn DefaultHandshakeClient(comptime Reader: type, comptime Writer: type) type {
-    return SeededHandshakeClient(Reader, Writer, std.rand.DefaultPrng);
 }
 
 pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
@@ -164,15 +167,18 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         payload_size: usize = 0,
         payload_index: usize = 0,
 
+        prng: std.rand.Random,
+
         // Whether a reader is currently using the read_buffer. if true, parser.next should NOT be called since the
         // reader expects all of the data.
         self_contained: bool = false,
 
-        pub fn init(buffer: []u8, input: Reader, output: Writer) Self {
+        pub fn init(buffer: []u8, input: Reader, output: Writer, prng: std.rand.Random) Self {
             return .{
                 .parser = ParserType.init(buffer, input),
                 .read_buffer = buffer,
                 .writer = output,
+                .prng = prng,
             };
         }
 
@@ -189,7 +195,13 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
             if (header.rsv3) bytes[0] |= 0x10;
 
             // client messages MUST be masked.
-            if (header.mask == null) return error.MissingMask;
+            var mask: [4]u8 = undefined;
+            if (header.mask) |m| {
+                std.mem.copy(u8, &mask, &m);
+            } else {
+                self.prng.bytes(&mask);
+            }
+
             bytes[1] |= 0x80;
 
             if (header.length < 126) {
@@ -206,12 +218,12 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 len += 8;
             }
 
-            std.mem.copy(u8, bytes[len .. len + 4], &header.mask.?);
+            std.mem.copy(u8, bytes[len .. len + 4], &mask);
             len += 4;
 
             try self.writer.writeAll(bytes[0..len]);
 
-            self.current_mask = header.mask.?;
+            self.current_mask = mask;
             self.mask_index = 0;
         }
 
@@ -316,7 +328,7 @@ test "test server required" {
     const Reader = std.io.FixedBufferStream([]const u8).Reader;
     const Writer = std.io.FixedBufferStream([]u8).Writer;
 
-    std.testing.refAllDecls(DefaultHandshakeClient(Reader, Writer));
+    std.testing.refAllDecls(HandshakeClient(Reader, Writer));
     std.testing.refAllDecls(BaseClient(Reader, Writer));
 }
 
@@ -335,7 +347,7 @@ test "example usage" {
     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
     const prng = std.rand.DefaultPrng.init(seed);
 
-    var handshake = DefaultHandshakeClient(Reader, Writer).init(&buffer, reader, writer, prng);
+    var handshake = HandshakeClient(Reader, Writer).init(&buffer, reader, writer, prng.random);
     try handshake.writeStatusLine("/");
     try handshake.writeHeaderValue("Host", "echo.websocket.org");
     try handshake.finishHeaders();
