@@ -173,6 +173,8 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
         // reader expects all of the data.
         self_contained: bool = false,
 
+        pub const handshake = HandshakeClient(Reader, Writer).init;
+
         pub fn init(buffer: []u8, input: Reader, output: Writer, prng: std.rand.Random) Self {
             return .{
                 .parser = ParserType.init(buffer, input),
@@ -345,15 +347,15 @@ test "example usage" {
     const Writer = @TypeOf(writer);
 
     const seed = @truncate(u64, @bitCast(u128, std.time.nanoTimestamp()));
-    const prng = std.rand.DefaultPrng.init(seed);
+    var prng = std.rand.DefaultPrng.init(seed);
 
-    var handshake = HandshakeClient(Reader, Writer).init(&buffer, reader, writer, prng.random);
+    var handshake = BaseClient(Reader, Writer).handshake(&buffer, reader, writer, prng.random());
     try handshake.writeStatusLine("/");
     try handshake.writeHeaderValue("Host", "echo.websocket.org");
     try handshake.finishHeaders();
 
     if (try handshake.wait()) {
-        var client = create(&buffer, reader, writer);
+        var client = handshake.socket();
 
         try client.writeHeader(.{
             .opcode = .binary,
