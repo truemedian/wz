@@ -204,7 +204,7 @@ pub fn BaseClient(comptime Reader: type, comptime Writer: type) type {
                 self.prng.bytes(&mask);
             }
 
-            bytes[1] |= 0x80;
+            bytes[1] = 0x80;
 
             if (header.length < 126) {
                 bytes[1] |= @truncate(u8, header.length);
