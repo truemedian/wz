@@ -67,7 +67,7 @@ pub fn HandshakeClient(comptime Reader: type, comptime Writer: type) type {
             var raw_key: [handshake_key_length]u8 = undefined;
             self.prng.bytes(&raw_key);
 
-            _ = base64.standard_encoder.encode(&self.handshake_key, &raw_key);
+            _ = base64.standard.Encoder.encode(&self.handshake_key, &raw_key);
         }
 
         fn addRequiredHeaders(self: *Self) Writer.Error!void {
