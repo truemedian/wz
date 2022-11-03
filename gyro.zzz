@@ -1,12 +1,9 @@
 pkgs:
   wz:
     version: 0.0.7
-    root: src/main.zig
     license: MIT
     source_url: "https://github.com/truemedian/wz"
-    tags:
-      websocket
-
+    tags: websocket
     root: src/main.zig
     files:
       README.md
@@ -14,6 +11,5 @@ pkgs:
       src/*.zig
       src/base/*.zig
       src/parser/*.zig
-
 deps:
   truemedian/hzzp: ^0.1.7

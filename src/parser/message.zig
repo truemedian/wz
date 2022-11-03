@@ -147,7 +147,8 @@ test "parses simple unmasked payload" {
     var read_buffer: [32]u8 = undefined;
     var request = [_]u8{ 0x81, 0x04, 'a', 'b', 'c', 'd' };
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -174,7 +175,8 @@ test "parses simple masked payload" {
     var read_buffer: [32]u8 = undefined;
     var request = [_]u8{ 0x81, 0x84, 0xa9, 0xb8, 0xc7, 0xd6, 'a' ^ 0xa9, 'b' ^ 0xb8, 'c' ^ 0xc7, 'd' ^ 0xd6 };
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -201,7 +203,8 @@ test "parses longer simple masked payload" {
     var read_buffer: [32]u8 = undefined;
     var request = [_]u8{ 0x81, 0x90, 0xa9, 0xb8, 0xc7, 0xd6 } ++ [_]u8{ 'a' ^ 0xa9, 'b' ^ 0xb8, 'c' ^ 0xc7, 'd' ^ 0xd6 } ** (0x10 / 4);
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -228,7 +231,8 @@ test "parses more than one simple unmasked payload" {
     var read_buffer: [32]u8 = undefined;
     var request = [_]u8{ 0x81, 0x04, 'a', 'b', 'c', 'd', 0x81, 0x04, 'a', 'b', 'c', 'd', 0x81, 0x04, 'a', 'b', 'c', 'd' };
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -293,7 +297,8 @@ test "parses simple unmasked medium payload" {
     var read_buffer: [512]u8 = undefined;
     var request = [_]u8{ 0x81, 0x07e, 0x01, 0x00 } ++ [_]u8{ 'a', 'b', 'c', 'd' } ** (0x100 / 4);
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -320,7 +325,8 @@ test "parses chunks simple unmasked medium payload" {
     var read_buffer: [128]u8 = undefined;
     var request = [_]u8{ 0x81, 0x07e, 0x01, 0x00 } ++ [_]u8{ 'a', 'b', 'c', 'd' } ** (0x100 / 4);
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
@@ -354,7 +360,8 @@ test "parses simple unmasked large payload" {
     var read_buffer: [0x10000]u8 = undefined;
     var request = [_]u8{ 0x81, 0x07f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00 } ++ [_]u8{ 'a', 'b', 'c', 'd' } ** (0x10000 / 4);
 
-    var reader = io.fixedBufferStream(&request).reader();
+    var fbs = io.fixedBufferStream(&request);
+    var reader = fbs.reader();
     var parser = create(&read_buffer, reader);
 
     try testNextField(&parser, .{
